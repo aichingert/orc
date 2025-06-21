@@ -1,21 +1,11 @@
 #include <stdio.h>
 #include <assert.h>
 
-#define VOLK_IMPLEMENTATION
-#include "volk.h"
-#define GLFW_INCLUDE_NONE
-#include "GLFW/glfw3.h"
+#include "vulkan.h"
 
 static const uint8_t VERT[] = {
     #embed "shaders/vert.spv"
 };
-
-#define VK_CHECK(call) \
-	do \
-	{ \
-		VkResult result_ = call; \
-		assert(result_ == VK_SUCCESS); \
-	} while (0)
 
 int main(void) {
     volkInitialize();
