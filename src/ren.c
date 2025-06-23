@@ -4,7 +4,7 @@
 #include "vulkan.h"
 
 static const uint8_t VERT[] = {
-    #embed "shaders/vert.spv"
+    #embed "../build/spirv/mesh.vert.spv"
 };
 
 #define COUNT(ARR) sizeof(ARR) / sizeof(ARR[0])
