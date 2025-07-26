@@ -1,8 +1,0 @@
-= ren
-aichingert
-:icons: font
-:toc:
-:toclevels: 3
-:experimental:
-
-this should be a simple graphics library that everyone without much extra knowledge can use, maybe in the future I will be motivated to make this somewhat into a game engine.
