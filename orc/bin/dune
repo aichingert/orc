@@ -1,4 +1,0 @@
-(executable
- (public_name orc)
- (name main)
- (libraries orc))
