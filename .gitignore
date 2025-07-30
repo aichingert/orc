@@ -9,3 +9,4 @@ _build/
 # Added by cargo
 
 /target
+src.bin
