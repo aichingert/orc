@@ -392,6 +392,34 @@ find_memory_type :: proc(physical: vk.PhysicalDevice, filter: u32, props: vk.Mem
     return 0
 }
 
+vk_create_buffer :: proc(
+    device: vk.Device,
+    physical: vk.PhysicalDevice,
+    size: vk.DeviceSize, 
+    usage: vk.BufferUsageFlags, 
+    props: vk.MemoryPropertyFlags, 
+    buffer: ^vk.Buffer, 
+    buffer_mem: ^vk.DeviceMemory)
+{
+    create_info := vk.BufferCreateInfo { sType = .BUFFER_CREATE_INFO,
+        size = size,
+        usage = usage,
+        sharingMode = .EXCLUSIVE,
+    }
+
+    check(vk.CreateBuffer(device, &create_info, nil, buffer))
+
+    mem_reqs: vk.MemoryRequirements
+    vk.GetBufferMemoryRequirements(device, buffer^, &mem_reqs)
+
+    alloc_info := vk.MemoryAllocateInfo { sType = .MEMORY_ALLOCATE_INFO,
+        allocationSize = mem_reqs.size,
+        memoryTypeIndex = find_memory_type(physical, mem_reqs.memoryTypeBits, props),
+    }
+    check(vk.AllocateMemory(device, &alloc_info, nil, buffer_mem))
+    vk.BindBufferMemory(device, buffer^, buffer_mem^, 0)
+}
+
 vk_create_vertex_buffer :: proc(
     device: vk.Device, 
     physical: vk.PhysicalDevice, 
@@ -399,29 +427,13 @@ vk_create_vertex_buffer :: proc(
     vertex_buffer: ^vk.Buffer,
     vertex_buffer_mem: ^vk.DeviceMemory) 
 {
-    create_info := vk.BufferCreateInfo { sType = .BUFFER_CREATE_INFO,
-        size = size_of(Vertex) * vk.DeviceSize(len(vertices)),
-        usage = {.VERTEX_BUFFER},
-        sharingMode = .EXCLUSIVE,
-    }
-
-    check(vk.CreateBuffer(device, &create_info, nil, vertex_buffer))
-
-    mem_reqs: vk.MemoryRequirements
-    vk.GetBufferMemoryRequirements(device, vertex_buffer^, &mem_reqs)
-
-    alloc_info := vk.MemoryAllocateInfo { sType = .MEMORY_ALLOCATE_INFO,
-        allocationSize = mem_reqs.size,
-        memoryTypeIndex = find_memory_type(physical, mem_reqs.memoryTypeBits, {.HOST_VISIBLE, .HOST_COHERENT}),
-    }
-
-    check(vk.AllocateMemory(device, &alloc_info, nil, vertex_buffer_mem))
-    vk.BindBufferMemory(device, vertex_buffer^, vertex_buffer_mem^, 0);
+    size := size_of(Vertex) * vk.DeviceSize(len(vertices))
+    vk_create_buffer(device, physical, size, {.VERTEX_BUFFER},  {.HOST_VISIBLE, .HOST_COHERENT}, vertex_buffer, vertex_buffer_mem)
 
     data: rawptr
-    vk.MapMemory(device, vertex_buffer_mem^, 0, create_info.size, {}, &data);
-    mem.copy(&data, raw_data(vertices), int(create_info.size));
-    vk.UnmapMemory(device, vertex_buffer_mem^);
+    vk.MapMemory(device, vertex_buffer_mem^, 0, size, {}, &data)
+    mem.copy(data, raw_data(vertices), int(size))
+    vk.UnmapMemory(device, vertex_buffer_mem^)
 }
 
 vk_create_graphics_pipeline :: proc(
