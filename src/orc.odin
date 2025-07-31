@@ -3,6 +3,7 @@ package main
 import "base:runtime"
 
 import "core:log"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 
@@ -14,7 +15,12 @@ g_ctx: runtime.Context
 VERT_SHADER :: #load("vert.spv")
 FRAG_SHADER :: #load("frag.spv")
 
-MAX_FRAMES_BETWEEN :: 5
+MAX_FRAMES_BETWEEN :: 2
+
+Vertex :: struct {
+    pos : [3]f32,
+    // x, y, z : f32,
+}
 
 check :: proc(result: vk.Result, loc := #caller_location) {
 	if result != .SUCCESS {
@@ -372,6 +378,52 @@ vk_create_shader_module :: proc(device: vk.Device, code: []byte) -> (module: vk.
     return
 }
 
+find_memory_type :: proc(physical: vk.PhysicalDevice, filter: u32, props: vk.MemoryPropertyFlags) -> u32 {
+    mem_props: vk.PhysicalDeviceMemoryProperties
+    vk.GetPhysicalDeviceMemoryProperties(physical, &mem_props)
+
+    for i in 0 ..< mem_props.memoryTypeCount {
+        if (filter & (1 << i)) != 0 && (mem_props.memoryTypes[i].propertyFlags & props == props) {
+            return i
+        }
+    }
+
+    assert(false, "vulkan: error no memory type found")
+    return 0
+}
+
+vk_create_vertex_buffer :: proc(
+    device: vk.Device, 
+    physical: vk.PhysicalDevice, 
+    vertices: []Vertex,
+    vertex_buffer: ^vk.Buffer,
+    vertex_buffer_mem: ^vk.DeviceMemory) 
+{
+    create_info := vk.BufferCreateInfo { sType = .BUFFER_CREATE_INFO,
+        size = size_of(Vertex) * vk.DeviceSize(len(vertices)),
+        usage = {.VERTEX_BUFFER},
+        sharingMode = .EXCLUSIVE,
+    }
+
+    check(vk.CreateBuffer(device, &create_info, nil, vertex_buffer))
+
+    mem_reqs: vk.MemoryRequirements
+    vk.GetBufferMemoryRequirements(device, vertex_buffer^, &mem_reqs)
+
+    alloc_info := vk.MemoryAllocateInfo { sType = .MEMORY_ALLOCATE_INFO,
+        allocationSize = mem_reqs.size,
+        memoryTypeIndex = find_memory_type(physical, mem_reqs.memoryTypeBits, {.HOST_VISIBLE, .HOST_COHERENT}),
+    }
+
+    check(vk.AllocateMemory(device, &alloc_info, nil, vertex_buffer_mem))
+    vk.BindBufferMemory(device, vertex_buffer^, vertex_buffer_mem^, 0);
+
+    data: rawptr
+    vk.MapMemory(device, vertex_buffer_mem^, 0, create_info.size, {}, &data);
+    mem.copy(&data, raw_data(vertices), int(create_info.size));
+    vk.UnmapMemory(device, vertex_buffer_mem^);
+}
+
 vk_create_graphics_pipeline :: proc(
     device: vk.Device, 
     format: vk.SurfaceFormatKHR,
@@ -404,8 +456,24 @@ vk_create_graphics_pipeline :: proc(
         pDynamicStates    = raw_data(dynamic_states),
     }
 
+    binding_desc := vk.VertexInputBindingDescription {
+        binding = 0,
+        stride = size_of(Vertex),
+        inputRate = .VERTEX,
+    }
+    attribute_desc := vk.VertexInputAttributeDescription {
+        binding = 0,
+        location = 0,
+        format = .R32G32B32_SFLOAT,
+        offset = 0,
+    }
+
     vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
         sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vertexBindingDescriptionCount = 1,
+        pVertexBindingDescriptions    = &binding_desc,
+        vertexAttributeDescriptionCount = 1,
+        pVertexAttributeDescriptions  = &attribute_desc,
     }
 
     input_assembly := vk.PipelineInputAssemblyStateCreateInfo {
@@ -437,7 +505,7 @@ vk_create_graphics_pipeline :: proc(
     rasterizer := vk.PipelineRasterizationStateCreateInfo {
         sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         polygonMode = .FILL,
-        lineWidth   = 1,
+        lineWidth   = 1.0,
         cullMode    = {.BACK},
         frontFace   = .CLOCKWISE,
     }
@@ -531,6 +599,8 @@ vk_record_command_buffer :: proc(
     extent: vk.Extent2D,
     images: []vk.Image,
     image_views: []vk.ImageView,
+    vertex_cnt: u32,
+    vertex_buf: vk.Buffer,
     pipeline: vk.Pipeline) 
 {
     begin_info := vk.CommandBufferBeginInfo { sType = .COMMAND_BUFFER_BEGIN_INFO }
@@ -545,8 +615,9 @@ vk_record_command_buffer :: proc(
     }
     vk.CmdPipelineBarrier(buffer, {.TOP_OF_PIPE}, {.COLOR_ATTACHMENT_OUTPUT}, {}, 0, nil, 0, nil, 1, &image_to_draw_barrier)
 
+    gray : f32 = 0.008
     clear_color := vk.ClearValue{}
-    clear_color.color.float32 = {  0.08627450980392157, 0.08627450980392157, 0.08627450980392157, 1.0  }
+    clear_color.color.float32 = { gray, gray, gray, 1.0 }
 
     color_attachment_info := vk.RenderingAttachmentInfoKHR { sType = .RENDERING_ATTACHMENT_INFO_KHR,
         imageView = image_views[image],
@@ -585,7 +656,11 @@ vk_record_command_buffer :: proc(
     vk.CmdSetViewport(buffer, 0, 1, &viewport)
     vk.CmdSetScissor(buffer, 0, 1, &scissor)
 
-    vk.CmdDraw(buffer, 3, 1, 0, 0)
+    vertex_buffers := []vk.Buffer{vertex_buf}
+    offsets := []vk.DeviceSize{0}
+    vk.CmdBindVertexBuffers(buffer, 0, 1, raw_data(vertex_buffers), raw_data(offsets))
+
+    vk.CmdDraw(buffer, vertex_cnt, 1, 0, 0)
     vk.CmdEndRenderingKHR(buffer)
     
     image_memory_barrier := vk.ImageMemoryBarrier{ sType = .IMAGE_MEMORY_BARRIER,
@@ -628,35 +703,26 @@ main :: proc() {
     pipeline_layout: vk.PipelineLayout
     command_pool: vk.CommandPool
     command_buffers: [MAX_FRAMES_BETWEEN]vk.CommandBuffer
+    vertex_buffer: vk.Buffer
+    vertex_buffer_mem: vk.DeviceMemory
     image_avail: [MAX_FRAMES_BETWEEN]vk.Semaphore
     render_done: [MAX_FRAMES_BETWEEN]vk.Semaphore
     fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
+    vertices := []Vertex{
+        Vertex{pos = {0.0, -0.5, 0.0}},
+        Vertex{pos = {0.5, 0.5, 0.0}},
+        Vertex{pos = {-0.5, 0.5, 0.0}},
+    }
+
     vk_create_instance(&instance, &dbg_messenger)
-
-    defer vk.DestroyDebugUtilsMessengerEXT(instance, dbg_messenger, nil)
-    defer vk.DestroyInstance(instance, nil)
-
     check(glfw.CreateWindowSurface(instance, win, nil, &surface))
-    defer vk.DestroySurfaceKHR(instance, surface, nil)
-
     family_index, queue := vk_create_device(instance, surface, &physical, &device)
-    defer vk.DestroyDevice(device, nil)
-
     format, extent, images, image_views = vk_create_swapchain(win, device, physical, surface, &swapchain)
-    defer vk_destroy_swapchain(device, swapchain, images, image_views)
-
     vk_create_graphics_pipeline(device, format, extent, &pipeline, &pipeline_layout)
-    defer vk.DestroyPipelineLayout(device, pipeline_layout, nil)
-    defer vk.DestroyPipeline(device, pipeline, nil)
-
+    vk_create_vertex_buffer(device, physical, vertices, &vertex_buffer, &vertex_buffer_mem)
     vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
-    defer vk.DestroyCommandPool(device, command_pool, nil)
-
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
-    defer for sem in image_avail { vk.DestroySemaphore(device, sem, nil) }
-    defer for sem in render_done { vk.DestroySemaphore(device, sem, nil) }
-    defer for fence in fences    { vk.DestroyFence(device, fence, nil  ) }
 
     frame := 0
 
@@ -664,6 +730,7 @@ main :: proc() {
         glfw.PollEvents()
 
         check(vk.WaitForFences(device, 1, &fences[frame], true, max(u64)))
+        check(vk.ResetFences(device, 1, &fences[frame]))
 
         image_index: u32 = 0
         acquire_result := vk.AcquireNextImageKHR(device, swapchain, max(u64), image_avail[frame], 0, &image_index)
@@ -679,10 +746,16 @@ main :: proc() {
             log.panicf("vulkan: acquire next image failure: %v", acquire_result)
         }
 
-        check(vk.ResetFences(device, 1, &fences[frame]))
-
         check(vk.ResetCommandBuffer(command_buffers[frame], {}))
-        vk_record_command_buffer(command_buffers[frame], image_index, extent, images, image_views, pipeline)
+        vk_record_command_buffer(
+            command_buffers[frame], 
+            image_index, 
+            extent, 
+            images, 
+            image_views, 
+            u32(len(vertices)), 
+            vertex_buffer, 
+            pipeline)
 
         submit_info := vk.SubmitInfo { sType = .SUBMIT_INFO,
             waitSemaphoreCount = 1,
@@ -716,8 +789,24 @@ main :: proc() {
         }
 
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
+
+        // TODO: figure out syncro
+        vk.DeviceWaitIdle(device)
     }
 
     vk.DeviceWaitIdle(device)
+    for sem in image_avail { vk.DestroySemaphore(device, sem, nil) }
+    for sem in render_done { vk.DestroySemaphore(device, sem, nil) }
+    for fence in fences    { vk.DestroyFence(device, fence, nil  ) }
+    vk.DestroyBuffer(device, vertex_buffer, nil)
+    vk.FreeMemory(device, vertex_buffer_mem, nil)
+    vk.DestroyCommandPool(device, command_pool, nil)
+    vk.DestroyPipeline(device, pipeline, nil)
+    vk.DestroyPipelineLayout(device, pipeline_layout, nil)
+    vk_destroy_swapchain(device, swapchain, images, image_views)
+    vk.DestroyDevice(device, nil)
+    vk.DestroyDebugUtilsMessengerEXT(instance, dbg_messenger, nil)
+    vk.DestroySurfaceKHR(instance, surface, nil)
+    vk.DestroyInstance(instance, nil)
 }
 
