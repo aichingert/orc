@@ -420,20 +420,72 @@ vk_create_buffer :: proc(
     vk.BindBufferMemory(device, buffer^, buffer_mem^, 0)
 }
 
+vk_copy_buffer :: proc(
+    device: vk.Device, 
+    pool: vk.CommandPool, 
+    queue: vk.Queue,
+    src: vk.Buffer, 
+    dst: vk.Buffer, 
+    size: vk.DeviceSize) 
+{
+    cmd_buf := vk_begin_single_time_commands(device, pool)
+
+    copy_region := vk.BufferCopy {size = size}
+    vk.CmdCopyBuffer(cmd_buf, src, dst, 1, &copy_region)
+
+    vk_end_single_time_commands(device, pool, queue, cmd_buf)
+}
+
 vk_create_vertex_buffer :: proc(
     device: vk.Device, 
     physical: vk.PhysicalDevice, 
+    pool: vk.CommandPool,
+    queue: vk.Queue,
     vertices: []Vertex,
     vertex_buffer: ^vk.Buffer,
     vertex_buffer_mem: ^vk.DeviceMemory) 
 {
     size := size_of(Vertex) * vk.DeviceSize(len(vertices))
-    vk_create_buffer(device, physical, size, {.VERTEX_BUFFER},  {.HOST_VISIBLE, .HOST_COHERENT}, vertex_buffer, vertex_buffer_mem)
+    staging_buf: vk.Buffer
+    staging_buf_mem: vk.DeviceMemory
+    vk_create_buffer(device, physical, size, {.TRANSFER_SRC},  {.HOST_VISIBLE, .HOST_COHERENT}, &staging_buf, &staging_buf_mem)
 
     data: rawptr
-    vk.MapMemory(device, vertex_buffer_mem^, 0, size, {}, &data)
+    vk.MapMemory(device, staging_buf_mem, 0, size, {}, &data)
     mem.copy(data, raw_data(vertices), int(size))
-    vk.UnmapMemory(device, vertex_buffer_mem^)
+    vk.UnmapMemory(device, staging_buf_mem)
+
+    vk_create_buffer(device, physical, size, {.TRANSFER_DST, .VERTEX_BUFFER}, {.DEVICE_LOCAL}, vertex_buffer, vertex_buffer_mem)
+    vk_copy_buffer(device, pool, queue, staging_buf, vertex_buffer^, size)
+
+    vk.DestroyBuffer(device, staging_buf, nil)
+    vk.FreeMemory(device, staging_buf_mem, nil)
+}
+
+vk_create_index_buffer :: proc(
+    device: vk.Device, 
+    physical: vk.PhysicalDevice, 
+    pool: vk.CommandPool,
+    queue: vk.Queue,
+    indices: []u16,
+    index_buffer: ^vk.Buffer,
+    index_buffer_mem: ^vk.DeviceMemory) 
+{
+    size := size_of(indices[0]) * vk.DeviceSize(len(indices))
+    staging_buf: vk.Buffer
+    staging_buf_mem: vk.DeviceMemory
+    vk_create_buffer(device, physical, size, {.TRANSFER_SRC},  {.HOST_VISIBLE, .HOST_COHERENT}, &staging_buf, &staging_buf_mem)
+
+    data: rawptr
+    vk.MapMemory(device, staging_buf_mem, 0, size, {}, &data)
+    mem.copy(data, raw_data(indices), int(size))
+    vk.UnmapMemory(device, staging_buf_mem)
+
+    vk_create_buffer(device, physical, size, {.TRANSFER_DST, .INDEX_BUFFER}, {.DEVICE_LOCAL}, index_buffer, index_buffer_mem)
+    vk_copy_buffer(device, pool, queue, staging_buf, index_buffer^, size)
+
+    vk.DestroyBuffer(device, staging_buf, nil)
+    vk.FreeMemory(device, staging_buf_mem, nil)
 }
 
 vk_create_graphics_pipeline :: proc(
@@ -605,14 +657,52 @@ vk_create_sync_structures :: proc(
     }
 }
 
+vk_begin_single_time_commands :: proc(device: vk.Device, pool: vk.CommandPool) -> vk.CommandBuffer {
+    alloc_info := vk.CommandBufferAllocateInfo { sType = .COMMAND_BUFFER_ALLOCATE_INFO,
+        level = .PRIMARY,
+        commandPool = pool,
+        commandBufferCount = 1,
+    }
+
+    cmd_buf: vk.CommandBuffer
+    vk.AllocateCommandBuffers(device, &alloc_info, &cmd_buf)
+
+    begin_info := vk.CommandBufferBeginInfo { sType = .COMMAND_BUFFER_BEGIN_INFO,
+        flags = {.ONE_TIME_SUBMIT}
+    }
+
+    vk.BeginCommandBuffer(cmd_buf, &begin_info)
+    return cmd_buf
+}
+
+vk_end_single_time_commands :: proc(
+    device: vk.Device, 
+    pool: vk.CommandPool, 
+    queue: vk.Queue, 
+    cmd_buf: vk.CommandBuffer)
+{
+    buffer := cmd_buf
+    vk.EndCommandBuffer(buffer)
+
+    submit_info := vk.SubmitInfo{ sType = .SUBMIT_INFO,
+        commandBufferCount = 1,
+        pCommandBuffers = &buffer,
+    }
+
+    vk.QueueSubmit(queue, 1, &submit_info, {})
+    vk.QueueWaitIdle(queue)
+    vk.FreeCommandBuffers(device, pool, 1, &buffer)
+}
+
 vk_record_command_buffer :: proc(
     buffer: vk.CommandBuffer, 
     image: u32,
     extent: vk.Extent2D,
     images: []vk.Image,
     image_views: []vk.ImageView,
-    vertex_cnt: u32,
+    index_cnt: u32,
     vertex_buf: vk.Buffer,
+    index_buf: vk.Buffer,
     pipeline: vk.Pipeline) 
 {
     begin_info := vk.CommandBufferBeginInfo { sType = .COMMAND_BUFFER_BEGIN_INFO }
@@ -671,8 +761,9 @@ vk_record_command_buffer :: proc(
     vertex_buffers := []vk.Buffer{vertex_buf}
     offsets := []vk.DeviceSize{0}
     vk.CmdBindVertexBuffers(buffer, 0, 1, raw_data(vertex_buffers), raw_data(offsets))
+    vk.CmdBindIndexBuffer(buffer, index_buf, 0, .UINT16)
 
-    vk.CmdDraw(buffer, vertex_cnt, 1, 0, 0)
+    vk.CmdDrawIndexed(buffer, index_cnt, 1, 0, 0, 0)
     vk.CmdEndRenderingKHR(buffer)
     
     image_memory_barrier := vk.ImageMemoryBarrier{ sType = .IMAGE_MEMORY_BARRIER,
@@ -716,24 +807,29 @@ main :: proc() {
     command_pool: vk.CommandPool
     command_buffers: [MAX_FRAMES_BETWEEN]vk.CommandBuffer
     vertex_buffer: vk.Buffer
+    index_buffer : vk.Buffer
     vertex_buffer_mem: vk.DeviceMemory
+    index_buffer_mem : vk.DeviceMemory
     image_avail: [MAX_FRAMES_BETWEEN]vk.Semaphore
     render_done: [MAX_FRAMES_BETWEEN]vk.Semaphore
     fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
     vertices := []Vertex{
-        Vertex{pos = {0.0, -0.5, 0.0}},
-        Vertex{pos = {0.5, 0.5, 0.0}},
-        Vertex{pos = {-0.5, 0.5, 0.0}},
+        {{-0.5, -0.5, 0.0}},
+        {{0.5,  -0.5, 0.0}},
+        {{0.5,  0.5 , 0.0}},
+        {{-0.5, 0.5 , 0.0}}
     }
+    indices := []u16{0, 1, 2, 2, 3, 0}
 
     vk_create_instance(&instance, &dbg_messenger)
     check(glfw.CreateWindowSurface(instance, win, nil, &surface))
     family_index, queue := vk_create_device(instance, surface, &physical, &device)
     format, extent, images, image_views = vk_create_swapchain(win, device, physical, surface, &swapchain)
     vk_create_graphics_pipeline(device, format, extent, &pipeline, &pipeline_layout)
-    vk_create_vertex_buffer(device, physical, vertices, &vertex_buffer, &vertex_buffer_mem)
     vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
+    vk_create_vertex_buffer(device, physical, command_pool, queue, vertices, &vertex_buffer, &vertex_buffer_mem)
+    vk_create_index_buffer(device, physical, command_pool, queue, indices, &index_buffer, &index_buffer_mem)
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
 
     frame := 0
@@ -765,8 +861,9 @@ main :: proc() {
             extent, 
             images, 
             image_views, 
-            u32(len(vertices)), 
+            u32(len(indices)),
             vertex_buffer, 
+            index_buffer,
             pipeline)
 
         submit_info := vk.SubmitInfo { sType = .SUBMIT_INFO,
@@ -801,9 +898,6 @@ main :: proc() {
         }
 
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
-
-        // TODO: figure out syncro
-        vk.DeviceWaitIdle(device)
     }
 
     vk.DeviceWaitIdle(device)
@@ -812,6 +906,8 @@ main :: proc() {
     for fence in fences    { vk.DestroyFence(device, fence, nil  ) }
     vk.DestroyBuffer(device, vertex_buffer, nil)
     vk.FreeMemory(device, vertex_buffer_mem, nil)
+    vk.DestroyBuffer(device, index_buffer, nil)
+    vk.FreeMemory(device, index_buffer_mem, nil)
     vk.DestroyCommandPool(device, command_pool, nil)
     vk.DestroyPipeline(device, pipeline, nil)
     vk.DestroyPipelineLayout(device, pipeline_layout, nil)
