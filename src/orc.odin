@@ -14,6 +14,8 @@ g_ctx: runtime.Context
 VERT_SHADER :: #load("vert.spv")
 FRAG_SHADER :: #load("frag.spv")
 
+MAX_FRAMES_BETWEEN :: 5
+
 check :: proc(result: vk.Result, loc := #caller_location) {
 	if result != .SUCCESS {
 		log.panicf("vulkan failure %v", result, location = loc)
@@ -116,8 +118,11 @@ vk_create_device :: proc(
     instance: vk.Instance, 
     surface: vk.SurfaceKHR, 
     physical: ^vk.PhysicalDevice, 
-    device: ^vk.Device) 
-{
+    device: ^vk.Device
+) -> (
+    family_index: u32,
+    queue: vk.Queue,
+) {
     count : u32 = 0
 
     check(vk.EnumeratePhysicalDevices(instance, &count, nil))
@@ -163,7 +168,7 @@ vk_create_device :: proc(
     assert(fallback_device != nil, "Error: no device found")
     physical^ = fallback_device^
 
-    family_index := vk_find_queue_family(physical^, surface)
+    family_index = vk_find_queue_family(physical^, surface)
 
     queue_create_info := vk.DeviceQueueCreateInfo { sType = .DEVICE_QUEUE_CREATE_INFO,
         queueFamilyIndex = family_index,
@@ -186,8 +191,10 @@ vk_create_device :: proc(
         ppEnabledExtensionNames = raw_data([]cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME, "VK_KHR_dynamic_rendering"}),
     }
 
-    log.info("CREATING")
     check(vk.CreateDevice(physical^, &create_info, nil, device))
+
+    vk.GetDeviceQueue(device^, family_index, 0, &queue)
+    return
 }
 
 SwapchainSupport :: struct {
@@ -328,6 +335,271 @@ vk_destroy_swapchain :: proc(
     vk.DestroySwapchainKHR(device, swapchain, nil)
 }
 
+vk_recreate_swapchain :: proc(
+    win: glfw.WindowHandle, 
+    device: vk.Device, 
+    physical: vk.PhysicalDevice,
+    surface: vk.SurfaceKHR,
+    swapchain: ^vk.SwapchainKHR,
+    images: ^[]vk.Image,
+    image_views: ^[]vk.ImageView
+) -> (
+     format: vk.SurfaceFormatKHR, 
+     extent: vk.Extent2D,
+     imgs: []vk.Image,
+     img_views: []vk.ImageView
+) {
+    for w, h := glfw.GetFramebufferSize(win); w == 0 || h == 0; w, h = glfw.GetFramebufferSize(win) {
+        glfw.WaitEvents()
+        if glfw.WindowShouldClose(win) { break }
+    }
+
+    vk.DeviceWaitIdle(device)
+    vk_destroy_swapchain(device, swapchain^, images^, image_views^)
+    vk_create_swapchain(win, device, physical, surface, swapchain)
+    return
+}
+
+vk_create_shader_module :: proc(device: vk.Device, code: []byte) -> (module: vk.ShaderModule) {
+    as_u32 := slice.reinterpret([]u32, code)
+
+    create_info := vk.ShaderModuleCreateInfo { sType = .SHADER_MODULE_CREATE_INFO,
+        codeSize    = len(code),
+        pCode       = raw_data(as_u32),
+    }
+
+    check(vk.CreateShaderModule(device, &create_info, nil, &module))
+    return
+}
+
+vk_create_graphics_pipeline :: proc(
+    device: vk.Device, 
+    format: vk.SurfaceFormatKHR,
+    extent: vk.Extent2D,
+    pipeline: ^vk.Pipeline, 
+    pipeline_layout: ^vk.PipelineLayout) 
+{
+    vert_shader_module := vk_create_shader_module(device, VERT_SHADER)
+    frag_shader_module := vk_create_shader_module(device, FRAG_SHADER)
+    defer vk.DestroyShaderModule(device, vert_shader_module, nil)
+    defer vk.DestroyShaderModule(device, frag_shader_module, nil)
+
+    shader_stages := [2]vk.PipelineShaderStageCreateInfo{
+        { sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+            stage = {.VERTEX},
+            module = vert_shader_module,
+            pName = "main",
+        },
+        { sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+            stage = {.FRAGMENT},
+            module = frag_shader_module,
+            pName = "main",
+        },
+    }
+
+    dynamic_states := []vk.DynamicState{.VIEWPORT, .SCISSOR}
+	dynamic_state := vk.PipelineDynamicStateCreateInfo {
+        sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        dynamicStateCount = u32(len(dynamic_states)),
+        pDynamicStates    = raw_data(dynamic_states),
+    }
+
+    vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
+        sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    }
+
+    input_assembly := vk.PipelineInputAssemblyStateCreateInfo {
+        sType    = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        topology = .TRIANGLE_LIST,
+    }
+
+    viewport := vk.Viewport {
+        x = 0.0,
+        y = 0.0,
+        width = f32(extent.width),
+        height = f32(extent.height),
+        minDepth = 0.0,
+        maxDepth = 1.0,
+    }
+    scissor := vk.Rect2D {
+        offset = { 0, 0 },
+        extent = extent,
+    }
+
+    viewport_state := vk.PipelineViewportStateCreateInfo {
+        sType         = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        viewportCount = 1,
+        pViewports = &viewport,
+        scissorCount  = 1,
+        pScissors = &scissor,
+    }
+
+    rasterizer := vk.PipelineRasterizationStateCreateInfo {
+        sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        polygonMode = .FILL,
+        lineWidth   = 1,
+        cullMode    = {.BACK},
+        frontFace   = .CLOCKWISE,
+    }
+
+    multisampling := vk.PipelineMultisampleStateCreateInfo {
+        sType                = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        rasterizationSamples = {._1},
+        minSampleShading     = 1,
+    }
+
+    color_blend_attachment := vk.PipelineColorBlendAttachmentState {
+        colorWriteMask = {.R, .G, .B, .A},
+    }
+
+    color_blending := vk.PipelineColorBlendStateCreateInfo {
+        sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        attachmentCount = 1,
+        pAttachments    = &color_blend_attachment,
+    }
+
+    pipeline_layout_info := vk.PipelineLayoutCreateInfo {
+        sType = .PIPELINE_LAYOUT_CREATE_INFO,
+    }
+    check(vk.CreatePipelineLayout(device, &pipeline_layout_info, nil, pipeline_layout))
+
+    surface_format := format.format
+    pipeline_rendering_info := vk.PipelineRenderingCreateInfoKHR { sType = .PIPELINE_RENDERING_CREATE_INFO_KHR,
+        colorAttachmentCount = 1,
+        pColorAttachmentFormats = &surface_format,
+    }
+
+    create_info := vk.GraphicsPipelineCreateInfo {
+        sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
+        pNext               = &pipeline_rendering_info,
+        stageCount          = 2,
+        pStages             = &shader_stages[0],
+        pVertexInputState   = &vertex_input_info,
+        pInputAssemblyState = &input_assembly,
+        pViewportState      = &viewport_state,
+        pRasterizationState = &rasterizer,
+        pMultisampleState   = &multisampling,
+        pColorBlendState    = &color_blending,
+        pDynamicState       = &dynamic_state,
+        layout              = pipeline_layout^,
+    }
+    check(vk.CreateGraphicsPipelines(device, 0, 1, &create_info, nil, pipeline))
+}
+
+vk_create_command_structures :: proc(
+    device: vk.Device, 
+    family_index: u32, 
+    pool: ^vk.CommandPool, 
+    buffers: ^vk.CommandBuffer) 
+{
+    pool_info := vk.CommandPoolCreateInfo { sType = .COMMAND_POOL_CREATE_INFO,
+        flags = {.RESET_COMMAND_BUFFER},
+        queueFamilyIndex = family_index,
+    }
+
+    check(vk.CreateCommandPool(device, &pool_info, nil, pool))
+
+    alloc_info := vk.CommandBufferAllocateInfo { sType = .COMMAND_BUFFER_ALLOCATE_INFO,
+        commandPool = pool^,
+        level = .PRIMARY,
+        commandBufferCount = MAX_FRAMES_BETWEEN,
+    }
+    check(vk.AllocateCommandBuffers(device, &alloc_info, buffers))
+}
+
+vk_create_sync_structures :: proc(
+    device: vk.Device, 
+    image_avail: ^[MAX_FRAMES_BETWEEN]vk.Semaphore, 
+    render_done: ^[MAX_FRAMES_BETWEEN]vk.Semaphore,
+    fences: ^[MAX_FRAMES_BETWEEN]vk.Fence) 
+{
+    sema_info := vk.SemaphoreCreateInfo { sType = .SEMAPHORE_CREATE_INFO }
+    fence_info := vk.FenceCreateInfo { sType = .FENCE_CREATE_INFO,
+        flags = {.SIGNALED},
+    }
+
+    for i in 0 ..< MAX_FRAMES_BETWEEN {
+        check(vk.CreateSemaphore(device, &sema_info, nil, &image_avail[i]))
+        check(vk.CreateSemaphore(device, &sema_info, nil, &render_done[i]))
+        check(vk.CreateFence(device, &fence_info, nil, &fences[i]))
+    }
+}
+
+vk_record_command_buffer :: proc(
+    buffer: vk.CommandBuffer, 
+    image: u32,
+    extent: vk.Extent2D,
+    images: []vk.Image,
+    image_views: []vk.ImageView,
+    pipeline: vk.Pipeline) 
+{
+    begin_info := vk.CommandBufferBeginInfo { sType = .COMMAND_BUFFER_BEGIN_INFO }
+    check(vk.BeginCommandBuffer(buffer, &begin_info))
+
+    image_to_draw_barrier := vk.ImageMemoryBarrier { sType = .IMAGE_MEMORY_BARRIER,
+        dstAccessMask = {.COLOR_ATTACHMENT_WRITE},
+        oldLayout = .UNDEFINED,
+        newLayout = .COLOR_ATTACHMENT_OPTIMAL,
+        image = images[image],
+        subresourceRange = { aspectMask =  {.COLOR}, levelCount = 1, layerCount = 1, },
+    }
+    vk.CmdPipelineBarrier(buffer, {.TOP_OF_PIPE}, {.COLOR_ATTACHMENT_OUTPUT}, {}, 0, nil, 0, nil, 1, &image_to_draw_barrier)
+
+    clear_color := vk.ClearValue{}
+    clear_color.color.float32 = {  0.08627450980392157, 0.08627450980392157, 0.08627450980392157, 1.0  }
+
+    color_attachment_info := vk.RenderingAttachmentInfoKHR { sType = .RENDERING_ATTACHMENT_INFO_KHR,
+        imageView = image_views[image],
+        imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+        loadOp = .CLEAR,
+        storeOp = .STORE,
+        clearValue = clear_color,
+    }
+
+    rendering_info := vk.RenderingInfoKHR { sType = .RENDERING_INFO_KHR,
+        renderArea = {
+            offset = { 0, 0 },
+            extent = extent,
+        },
+        layerCount = 1,
+        colorAttachmentCount = 1,
+        pColorAttachments = &color_attachment_info,
+    }
+
+    vk.CmdBeginRenderingKHR(buffer, &rendering_info)
+    vk.CmdBindPipeline(buffer, .GRAPHICS, pipeline)
+
+    viewport := vk.Viewport {
+        x = 0.0,
+        y = 0.0,
+        width = f32(extent.width),
+        height = f32(extent.height),
+        minDepth = 0.0,
+        maxDepth = 1.0,
+    }
+    scissor := vk.Rect2D {
+        offset = { 0, 0 },
+        extent = extent,
+    }
+
+    vk.CmdSetViewport(buffer, 0, 1, &viewport)
+    vk.CmdSetScissor(buffer, 0, 1, &scissor)
+
+    vk.CmdDraw(buffer, 3, 1, 0, 0)
+    vk.CmdEndRenderingKHR(buffer)
+    
+    image_memory_barrier := vk.ImageMemoryBarrier{ sType = .IMAGE_MEMORY_BARRIER,
+        srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
+        oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
+        newLayout = .PRESENT_SRC_KHR,
+        image = images[image],
+        subresourceRange = { aspectMask = {.COLOR}, levelCount = 1, layerCount = 1, },
+    }
+    vk.CmdPipelineBarrier(buffer, {.COLOR_ATTACHMENT_OUTPUT}, {.BOTTOM_OF_PIPE}, {}, 0, nil, 0, nil, 1, &image_memory_barrier)
+
+    check(vk.EndCommandBuffer(buffer))
+}
+
 main :: proc() {
     context.logger = log.create_console_logger()
     g_ctx = context
@@ -352,6 +624,13 @@ main :: proc() {
     extent: vk.Extent2D
     images: []vk.Image
     image_views: []vk.ImageView
+    pipeline: vk.Pipeline
+    pipeline_layout: vk.PipelineLayout
+    command_pool: vk.CommandPool
+    command_buffers: [MAX_FRAMES_BETWEEN]vk.CommandBuffer
+    image_avail: [MAX_FRAMES_BETWEEN]vk.Semaphore
+    render_done: [MAX_FRAMES_BETWEEN]vk.Semaphore
+    fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
     vk_create_instance(&instance, &dbg_messenger)
 
@@ -361,18 +640,84 @@ main :: proc() {
     check(glfw.CreateWindowSurface(instance, win, nil, &surface))
     defer vk.DestroySurfaceKHR(instance, surface, nil)
 
-    vk_create_device(instance, surface, &physical, &device)
+    family_index, queue := vk_create_device(instance, surface, &physical, &device)
     defer vk.DestroyDevice(device, nil)
 
     format, extent, images, image_views = vk_create_swapchain(win, device, physical, surface, &swapchain)
     defer vk_destroy_swapchain(device, swapchain, images, image_views)
 
-    for !glfw.WindowShouldClose(win) {
+    vk_create_graphics_pipeline(device, format, extent, &pipeline, &pipeline_layout)
+    defer vk.DestroyPipelineLayout(device, pipeline_layout, nil)
+    defer vk.DestroyPipeline(device, pipeline, nil)
 
+    vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
+    defer vk.DestroyCommandPool(device, command_pool, nil)
+
+    vk_create_sync_structures(device, &image_avail, &render_done, &fences)
+    defer for sem in image_avail { vk.DestroySemaphore(device, sem, nil) }
+    defer for sem in render_done { vk.DestroySemaphore(device, sem, nil) }
+    defer for fence in fences    { vk.DestroyFence(device, fence, nil  ) }
+
+    frame := 0
+
+    for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
 
+        check(vk.WaitForFences(device, 1, &fences[frame], true, max(u64)))
+
+        image_index: u32 = 0
+        acquire_result := vk.AcquireNextImageKHR(device, swapchain, max(u64), image_avail[frame], 0, &image_index)
+
+        #partial switch acquire_result {
+        case .ERROR_OUT_OF_DATE_KHR:
+            format, extent, images, image_views = vk_recreate_swapchain(
+                win, device, physical, surface, &swapchain, &images, &image_views
+            )
+            continue
+        case .SUCCESS, .SUBOPTIMAL_KHR:
+        case:
+            log.panicf("vulkan: acquire next image failure: %v", acquire_result)
+        }
+
+        check(vk.ResetFences(device, 1, &fences[frame]))
+
+        check(vk.ResetCommandBuffer(command_buffers[frame], {}))
+        vk_record_command_buffer(command_buffers[frame], image_index, extent, images, image_views, pipeline)
+
+        submit_info := vk.SubmitInfo { sType = .SUBMIT_INFO,
+            waitSemaphoreCount = 1,
+            pWaitSemaphores    = &image_avail[frame],
+            pWaitDstStageMask  = &vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT},
+            commandBufferCount = 1,
+            pCommandBuffers    = &command_buffers[frame],
+            signalSemaphoreCount = 1,
+            pSignalSemaphores  = &render_done[frame]
+        }
+
+        check(vk.QueueSubmit(queue, 1, &submit_info, fences[frame]))
+
+        present_info := vk.PresentInfoKHR { sType = .PRESENT_INFO_KHR,
+            waitSemaphoreCount = 1,
+            pWaitSemaphores = &render_done[frame],
+            swapchainCount = 1,
+            pSwapchains = &swapchain,
+            pImageIndices = &image_index,
+        }
+
+        present_result := vk.QueuePresentKHR(queue, &present_info)
+        switch {
+        case present_result == .ERROR_OUT_OF_DATE_KHR || present_result == .SUBOPTIMAL_KHR:
+            format, extent, images, image_views = vk_recreate_swapchain(
+                win, device, physical, surface, &swapchain, &images, &image_views
+            )
+        case present_result == .SUCCESS:
+        case:
+            log.panicf("vulkan: present failure: %v", present_result)
+        }
+
+        frame = (frame + 1) % MAX_FRAMES_BETWEEN
     }
+
+    vk.DeviceWaitIdle(device)
 }
-
-
 
