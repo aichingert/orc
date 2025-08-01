@@ -17,6 +17,14 @@ FRAG_SHADER :: #load("frag.spv")
 
 MAX_FRAMES_BETWEEN :: 2
 
+UNIFORM_BUFFER_BINDING :: 0
+
+UniformBufferObject :: struct {
+    model: [4][4]f32,
+    view : [4][4]f32,
+    proj : [4][4]f32,
+}
+
 Vertex :: struct {
     pos : [3]f32,
     // x, y, z : f32,
@@ -488,10 +496,36 @@ vk_create_index_buffer :: proc(
     vk.FreeMemory(device, staging_buf_mem, nil)
 }
 
+vk_create_uniform_buffers :: proc(
+    device: vk.Device,
+    physical: vk.PhysicalDevice,
+) -> (
+    uniform_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
+    uniform_buffers_mem: [MAX_FRAMES_BETWEEN]vk.DeviceMemory,
+    uniform_buffers_map: [MAX_FRAMES_BETWEEN]rawptr,
+) {
+    size := vk.DeviceSize(size_of(UniformBufferObject))
+
+    for i in 0 ..< MAX_FRAMES_BETWEEN {
+        vk_create_buffer(
+            device, 
+            physical, 
+            size, 
+            {.UNIFORM_BUFFER}, 
+            {.HOST_VISIBLE, .HOST_COHERENT}, 
+            &uniform_buffers[i], 
+            &uniform_buffers_mem[i])
+        vk.MapMemory(device, uniform_buffers_mem[i], 0, size, {}, &uniform_buffers_map[i])
+    }
+
+    return
+}
+
 vk_create_graphics_pipeline :: proc(
     device: vk.Device, 
     format: vk.SurfaceFormatKHR,
     extent: vk.Extent2D,
+    set_layout: ^vk.DescriptorSetLayout,
     pipeline: ^vk.Pipeline, 
     pipeline_layout: ^vk.PipelineLayout) 
 {
@@ -590,8 +624,9 @@ vk_create_graphics_pipeline :: proc(
         pAttachments    = &color_blend_attachment,
     }
 
-    pipeline_layout_info := vk.PipelineLayoutCreateInfo {
-        sType = .PIPELINE_LAYOUT_CREATE_INFO,
+    pipeline_layout_info := vk.PipelineLayoutCreateInfo { sType = .PIPELINE_LAYOUT_CREATE_INFO,
+        setLayoutCount = 1,
+        pSetLayouts    = set_layout,
     }
     check(vk.CreatePipelineLayout(device, &pipeline_layout_info, nil, pipeline_layout))
 
@@ -637,6 +672,84 @@ vk_create_command_structures :: proc(
         commandBufferCount = MAX_FRAMES_BETWEEN,
     }
     check(vk.AllocateCommandBuffers(device, &alloc_info, buffers))
+}
+
+vk_create_descriptor_set_layout :: proc(device: vk.Device, layout: ^vk.DescriptorSetLayout) {
+    uniform_buffer_binding := vk.DescriptorSetLayoutBinding {
+        binding = UNIFORM_BUFFER_BINDING,
+        descriptorType = .UNIFORM_BUFFER,
+        descriptorCount = 1,
+        stageFlags = {.VERTEX},
+    }
+
+    bindings := []vk.DescriptorSetLayoutBinding{
+        uniform_buffer_binding,
+    }
+
+    create_info := vk.DescriptorSetLayoutCreateInfo { sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        bindingCount = u32(len(bindings)),
+        pBindings    = raw_data(bindings),
+    }
+
+    check(vk.CreateDescriptorSetLayout(device, &create_info, nil, layout))
+}
+
+vk_create_descriptor_pool :: proc(device: vk.Device, pool: ^vk.DescriptorPool) {
+    pool_sizes := []vk.DescriptorPoolSize {
+        {
+            type = .UNIFORM_BUFFER,
+            descriptorCount = MAX_FRAMES_BETWEEN,
+        }
+    }
+
+    create_info := vk.DescriptorPoolCreateInfo { sType = .DESCRIPTOR_POOL_CREATE_INFO,
+        maxSets = MAX_FRAMES_BETWEEN,
+        poolSizeCount = u32(len(pool_sizes)),
+        pPoolSizes    = raw_data(pool_sizes),
+    }
+
+    check(vk.CreateDescriptorPool(device, &create_info, nil, pool))
+}
+
+vk_create_descriptor_sets :: proc(
+    device: vk.Device, 
+    ubos: [MAX_FRAMES_BETWEEN]vk.Buffer,
+    pool: vk.DescriptorPool,
+    set_layout: vk.DescriptorSetLayout
+) -> (
+    sets: [MAX_FRAMES_BETWEEN]vk.DescriptorSet
+) {
+    layouts: [MAX_FRAMES_BETWEEN]vk.DescriptorSetLayout
+    for &layout in layouts {
+        layout = set_layout
+    }
+
+    alloc_info := vk.DescriptorSetAllocateInfo { sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+        descriptorPool = pool,
+        descriptorSetCount = MAX_FRAMES_BETWEEN,
+        pSetLayouts = raw_data(&layouts),
+    }
+    check(vk.AllocateDescriptorSets(device, &alloc_info, raw_data(&sets)))
+
+    for i in 0 ..< MAX_FRAMES_BETWEEN {
+        buffer_info := vk.DescriptorBufferInfo {
+            buffer = ubos[i],
+            offset = 0,
+            range = size_of(UniformBufferObject),
+        }
+
+        desc_write := vk.WriteDescriptorSet { sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = sets[i],
+            dstBinding = 0,
+            dstArrayElement = 0,
+            descriptorType = .UNIFORM_BUFFER,
+            descriptorCount = 1,
+            pBufferInfo = &buffer_info,
+        }
+
+        vk.UpdateDescriptorSets(device, 1, &desc_write, 0, nil)
+    }
+    return
 }
 
 vk_create_sync_structures :: proc(
@@ -697,13 +810,16 @@ vk_end_single_time_commands :: proc(
 vk_record_command_buffer :: proc(
     buffer: vk.CommandBuffer, 
     image: u32,
+    frame: u32,
     extent: vk.Extent2D,
     images: []vk.Image,
     image_views: []vk.ImageView,
+    descriptor_sets: [MAX_FRAMES_BETWEEN]vk.DescriptorSet,
     index_cnt: u32,
     vertex_buf: vk.Buffer,
     index_buf: vk.Buffer,
-    pipeline: vk.Pipeline) 
+    pipeline: vk.Pipeline,
+    pipeline_layout: vk.PipelineLayout) 
 {
     begin_info := vk.CommandBufferBeginInfo { sType = .COMMAND_BUFFER_BEGIN_INFO }
     check(vk.BeginCommandBuffer(buffer, &begin_info))
@@ -758,6 +874,9 @@ vk_record_command_buffer :: proc(
     vk.CmdSetViewport(buffer, 0, 1, &viewport)
     vk.CmdSetScissor(buffer, 0, 1, &scissor)
 
+    set := descriptor_sets[frame]
+    vk.CmdBindDescriptorSets(buffer, .GRAPHICS, pipeline_layout, 0, 1, &set, 0, nil)
+
     vertex_buffers := []vk.Buffer{vertex_buf}
     offsets := []vk.DeviceSize{0}
     vk.CmdBindVertexBuffers(buffer, 0, 1, raw_data(vertex_buffers), raw_data(offsets))
@@ -802,6 +921,8 @@ main :: proc() {
     extent: vk.Extent2D
     images: []vk.Image
     image_views: []vk.ImageView
+    descriptor_pool: vk.DescriptorPool
+    descriptor_set_layout: vk.DescriptorSetLayout
     pipeline: vk.Pipeline
     pipeline_layout: vk.PipelineLayout
     command_pool: vk.CommandPool
@@ -826,13 +947,17 @@ main :: proc() {
     check(glfw.CreateWindowSurface(instance, win, nil, &surface))
     family_index, queue := vk_create_device(instance, surface, &physical, &device)
     format, extent, images, image_views = vk_create_swapchain(win, device, physical, surface, &swapchain)
-    vk_create_graphics_pipeline(device, format, extent, &pipeline, &pipeline_layout)
+    vk_create_descriptor_set_layout(device, &descriptor_set_layout)
+    vk_create_graphics_pipeline(device, format, extent, &descriptor_set_layout, &pipeline, &pipeline_layout)
     vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
     vk_create_vertex_buffer(device, physical, command_pool, queue, vertices, &vertex_buffer, &vertex_buffer_mem)
     vk_create_index_buffer(device, physical, command_pool, queue, indices, &index_buffer, &index_buffer_mem)
+    uniform_buffers, uniform_buffers_mem, uniform_buffers_map := vk_create_uniform_buffers(device, physical)
+    vk_create_descriptor_pool(device, &descriptor_pool)
+    sets := vk_create_descriptor_sets(device, uniform_buffers, descriptor_pool, descriptor_set_layout)
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
 
-    frame := 0
+    frame := u32(0)
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
@@ -858,13 +983,16 @@ main :: proc() {
         vk_record_command_buffer(
             command_buffers[frame], 
             image_index, 
+            frame,
             extent, 
             images, 
             image_views, 
+            sets,
             u32(len(indices)),
             vertex_buffer, 
             index_buffer,
-            pipeline)
+            pipeline,
+            pipeline_layout)
 
         submit_info := vk.SubmitInfo { sType = .SUBMIT_INFO,
             waitSemaphoreCount = 1,
@@ -904,6 +1032,8 @@ main :: proc() {
     for sem in image_avail { vk.DestroySemaphore(device, sem, nil) }
     for sem in render_done { vk.DestroySemaphore(device, sem, nil) }
     for fence in fences    { vk.DestroyFence(device, fence, nil  ) }
+
+    vk.DestroyDescriptorPool(device, descriptor_pool, nil)
     vk.DestroyBuffer(device, vertex_buffer, nil)
     vk.FreeMemory(device, vertex_buffer_mem, nil)
     vk.DestroyBuffer(device, index_buffer, nil)
