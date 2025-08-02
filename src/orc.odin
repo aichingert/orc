@@ -15,14 +15,17 @@ g_ctx: runtime.Context
 VERT_SHADER :: #load("vert.spv")
 FRAG_SHADER :: #load("frag.spv")
 
+CUBES :: 3 * 9
 MAX_FRAMES_BETWEEN :: 2
-
 UNIFORM_BUFFER_BINDING :: 0
 
-UniformBufferObject :: struct {
-    model: [4][4]f32,
-    view : [4][4]f32,
-    proj : [4][4]f32,
+Camera :: struct {
+    view : matrix[4,4]f32,
+    proj : matrix[4,4]f32,
+}
+
+CubeData :: struct {
+    models: []matrix[4, 4]f32,
 }
 
 Vertex :: struct {
@@ -499,12 +502,40 @@ vk_create_index_buffer :: proc(
 vk_create_uniform_buffers :: proc(
     device: vk.Device,
     physical: vk.PhysicalDevice,
+    cubes: ^CubeData,
 ) -> (
     uniform_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
     uniform_buffers_mem: [MAX_FRAMES_BETWEEN]vk.DeviceMemory,
     uniform_buffers_map: [MAX_FRAMES_BETWEEN]rawptr,
+
+    dynamic_uniform_buffer: vk.Buffer,
+    dynamic_uniform_buffer_mem: vk.DeviceMemory,
+    dynamic_uniform_buffer_map: rawptr,
 ) {
-    size := vk.DeviceSize(size_of(UniformBufferObject))
+    props: vk.PhysicalDeviceProperties
+    vk.GetPhysicalDeviceProperties(physical, &props)
+
+    min_ubo_align := props.limits.minUniformBufferOffsetAlignment
+    dynamic_align := size_of(matrix[4,4]f32)
+
+    buffer_size := vk.DeviceSize(CUBES * dynamic_align)
+    models, err := mem.make_aligned([]matrix[4,4]f32, CUBES, dynamic_align)
+    assert(err == .None, "Error: failed to allocate")
+
+    cubes.models = models
+
+    vk_create_buffer(
+        device, 
+        physical, 
+        buffer_size, 
+        {.UNIFORM_BUFFER}, 
+        {.HOST_VISIBLE, .HOST_COHERENT}, 
+        &dynamic_uniform_buffer,
+        &dynamic_uniform_buffer_mem,
+        )
+    check(vk.MapMemory(device, dynamic_uniform_buffer_mem, 0, buffer_size, {}, &dynamic_uniform_buffer_map))
+
+    size := vk.DeviceSize(size_of(Camera))
 
     for i in 0 ..< MAX_FRAMES_BETWEEN {
         vk_create_buffer(
@@ -515,7 +546,7 @@ vk_create_uniform_buffers :: proc(
             {.HOST_VISIBLE, .HOST_COHERENT}, 
             &uniform_buffers[i], 
             &uniform_buffers_mem[i])
-        vk.MapMemory(device, uniform_buffers_mem[i], 0, size, {}, &uniform_buffers_map[i])
+        check(vk.MapMemory(device, uniform_buffers_mem[i], 0, size, {}, &uniform_buffers_map[i]))
     }
 
     return
@@ -735,7 +766,7 @@ vk_create_descriptor_sets :: proc(
         buffer_info := vk.DescriptorBufferInfo {
             buffer = ubos[i],
             offset = 0,
-            range = size_of(UniformBufferObject),
+            range = size_of(Camera),
         }
 
         desc_write := vk.WriteDescriptorSet { sType = .WRITE_DESCRIPTOR_SET,
@@ -943,6 +974,8 @@ main :: proc() {
     }
     indices := []u16{0, 1, 2, 2, 3, 0}
 
+    cubes: CubeData
+
     vk_create_instance(&instance, &dbg_messenger)
     check(glfw.CreateWindowSurface(instance, win, nil, &surface))
     family_index, queue := vk_create_device(instance, surface, &physical, &device)
@@ -952,7 +985,7 @@ main :: proc() {
     vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
     vk_create_vertex_buffer(device, physical, command_pool, queue, vertices, &vertex_buffer, &vertex_buffer_mem)
     vk_create_index_buffer(device, physical, command_pool, queue, indices, &index_buffer, &index_buffer_mem)
-    uniform_buffers, uniform_buffers_mem, uniform_buffers_map := vk_create_uniform_buffers(device, physical)
+    uniform_buffers, uniform_buffers_mem, uniform_buffers_map, db, dbm, dum := vk_create_uniform_buffers(device, physical, &cubes)
     vk_create_descriptor_pool(device, &descriptor_pool)
     sets := vk_create_descriptor_sets(device, uniform_buffers, descriptor_pool, descriptor_set_layout)
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
@@ -1025,6 +1058,7 @@ main :: proc() {
             log.panicf("vulkan: present failure: %v", present_result)
         }
 
+        check(vk.QueueWaitIdle(queue))
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
     }
 
