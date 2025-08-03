@@ -17,7 +17,9 @@ FRAG_SHADER :: #load("frag.spv")
 
 CUBES :: 3 * 9
 MAX_FRAMES_BETWEEN :: 2
+
 UNIFORM_BUFFER_BINDING :: 0
+UNIFORM_BUFFER_DYNAMIC_BINDING :: 1
 
 Camera :: struct {
     view : matrix[4,4]f32,
@@ -503,38 +505,32 @@ vk_create_uniform_buffers :: proc(
     device: vk.Device,
     physical: vk.PhysicalDevice,
     cubes: ^CubeData,
+    cube_range: ^vk.DeviceSize,
 ) -> (
-    uniform_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
-    uniform_buffers_mem: [MAX_FRAMES_BETWEEN]vk.DeviceMemory,
-    uniform_buffers_map: [MAX_FRAMES_BETWEEN]rawptr,
+    camera_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
+    camera_buffer_mems: [MAX_FRAMES_BETWEEN]vk.DeviceMemory,
+    camera_buffer_maps: [MAX_FRAMES_BETWEEN]rawptr,
 
-    dynamic_uniform_buffer: vk.Buffer,
-    dynamic_uniform_buffer_mem: vk.DeviceMemory,
-    dynamic_uniform_buffer_map: rawptr,
+    cube_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
+    cube_buffer_mems: [MAX_FRAMES_BETWEEN]vk.DeviceMemory,
+    cube_buffer_maps: [MAX_FRAMES_BETWEEN]rawptr,
 ) {
     props: vk.PhysicalDeviceProperties
     vk.GetPhysicalDeviceProperties(physical, &props)
 
     min_ubo_align := props.limits.minUniformBufferOffsetAlignment
-    dynamic_align := size_of(matrix[4,4]f32)
+    dynamic_align := vk.DeviceSize(size_of(matrix[4,4]f32))
+    log.info(min_ubo_align)
+    if min_ubo_align > 0 {
+        dynamic_align = (dynamic_align + min_ubo_align - 1) & ~(min_ubo_align - 1)
+    }
+    cube_range^ = vk.DeviceSize(dynamic_align)
 
     buffer_size := vk.DeviceSize(CUBES * dynamic_align)
-    models, err := mem.make_aligned([]matrix[4,4]f32, CUBES, dynamic_align)
+    models, err := mem.make_aligned([]matrix[4,4]f32, CUBES, int(dynamic_align))
     assert(err == .None, "Error: failed to allocate")
 
     cubes.models = models
-
-    vk_create_buffer(
-        device, 
-        physical, 
-        buffer_size, 
-        {.UNIFORM_BUFFER}, 
-        {.HOST_VISIBLE, .HOST_COHERENT}, 
-        &dynamic_uniform_buffer,
-        &dynamic_uniform_buffer_mem,
-        )
-    check(vk.MapMemory(device, dynamic_uniform_buffer_mem, 0, buffer_size, {}, &dynamic_uniform_buffer_map))
-
     size := vk.DeviceSize(size_of(Camera))
 
     for i in 0 ..< MAX_FRAMES_BETWEEN {
@@ -544,9 +540,20 @@ vk_create_uniform_buffers :: proc(
             size, 
             {.UNIFORM_BUFFER}, 
             {.HOST_VISIBLE, .HOST_COHERENT}, 
-            &uniform_buffers[i], 
-            &uniform_buffers_mem[i])
-        check(vk.MapMemory(device, uniform_buffers_mem[i], 0, size, {}, &uniform_buffers_map[i]))
+            &camera_buffers[i], 
+            &camera_buffer_mems[i])
+        check(vk.MapMemory(device, camera_buffer_mems[i], 0, size, {}, &camera_buffer_maps[i]))
+
+        vk_create_buffer(
+            device, 
+            physical, 
+            buffer_size, 
+            {.UNIFORM_BUFFER}, 
+            {.HOST_VISIBLE, .HOST_COHERENT}, 
+            &cube_buffers[i],
+            &cube_buffer_mems[i],
+            )
+        check(vk.MapMemory(device, cube_buffer_mems[i], 0, buffer_size, {}, &cube_buffer_maps[i]))
     }
 
     return
@@ -713,8 +720,16 @@ vk_create_descriptor_set_layout :: proc(device: vk.Device, layout: ^vk.Descripto
         stageFlags = {.VERTEX},
     }
 
+    dynamic_uniform_buffer_binding := vk.DescriptorSetLayoutBinding {
+        binding = UNIFORM_BUFFER_DYNAMIC_BINDING,
+        descriptorType = .UNIFORM_BUFFER_DYNAMIC,
+        descriptorCount = 1,
+        stageFlags = {.VERTEX},
+    }
+
     bindings := []vk.DescriptorSetLayoutBinding{
         uniform_buffer_binding,
+        dynamic_uniform_buffer_binding,
     }
 
     create_info := vk.DescriptorSetLayoutCreateInfo { sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -730,6 +745,10 @@ vk_create_descriptor_pool :: proc(device: vk.Device, pool: ^vk.DescriptorPool) {
         {
             type = .UNIFORM_BUFFER,
             descriptorCount = MAX_FRAMES_BETWEEN,
+        },
+        {
+            type = .UNIFORM_BUFFER_DYNAMIC,
+            descriptorCount = MAX_FRAMES_BETWEEN,
         }
     }
 
@@ -744,7 +763,9 @@ vk_create_descriptor_pool :: proc(device: vk.Device, pool: ^vk.DescriptorPool) {
 
 vk_create_descriptor_sets :: proc(
     device: vk.Device, 
-    ubos: [MAX_FRAMES_BETWEEN]vk.Buffer,
+    cube_range: vk.DeviceSize,
+    cube_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
+    camera_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
     pool: vk.DescriptorPool,
     set_layout: vk.DescriptorSetLayout
 ) -> (
@@ -762,14 +783,21 @@ vk_create_descriptor_sets :: proc(
     }
     check(vk.AllocateDescriptorSets(device, &alloc_info, raw_data(&sets)))
 
+    write_descs: [2 * MAX_FRAMES_BETWEEN]vk.WriteDescriptorSet
+
     for i in 0 ..< MAX_FRAMES_BETWEEN {
         buffer_info := vk.DescriptorBufferInfo {
-            buffer = ubos[i],
+            buffer = camera_buffers[i],
             offset = 0,
             range = size_of(Camera),
         }
+        dynamic_buffer_info := vk.DescriptorBufferInfo {
+            buffer = cube_buffers[i],
+            offset = 0,
+            range = cube_range,
+        }
 
-        desc_write := vk.WriteDescriptorSet { sType = .WRITE_DESCRIPTOR_SET,
+        write_descs[i * 2] = vk.WriteDescriptorSet { sType = .WRITE_DESCRIPTOR_SET,
             dstSet = sets[i],
             dstBinding = 0,
             dstArrayElement = 0,
@@ -777,9 +805,17 @@ vk_create_descriptor_sets :: proc(
             descriptorCount = 1,
             pBufferInfo = &buffer_info,
         }
-
-        vk.UpdateDescriptorSets(device, 1, &desc_write, 0, nil)
+        write_descs[i * 2 + 1] = vk.WriteDescriptorSet { sType = .WRITE_DESCRIPTOR_SET,
+            dstSet = sets[i],
+            dstBinding = 0,
+            dstArrayElement = 0,
+            descriptorType = .UNIFORM_BUFFER,
+            descriptorCount = 1,
+            pBufferInfo = &buffer_info,
+        }
     }
+
+    vk.UpdateDescriptorSets(device, len(write_descs), raw_data(&write_descs), 0, nil)
     return
 }
 
@@ -842,6 +878,7 @@ vk_record_command_buffer :: proc(
     buffer: vk.CommandBuffer, 
     image: u32,
     frame: u32,
+    dynamic_align: [^]u32,
     extent: vk.Extent2D,
     images: []vk.Image,
     image_views: []vk.ImageView,
@@ -906,7 +943,7 @@ vk_record_command_buffer :: proc(
     vk.CmdSetScissor(buffer, 0, 1, &scissor)
 
     set := descriptor_sets[frame]
-    vk.CmdBindDescriptorSets(buffer, .GRAPHICS, pipeline_layout, 0, 1, &set, 0, nil)
+    vk.CmdBindDescriptorSets(buffer, .GRAPHICS, pipeline_layout, 0, 1, &set, 1, dynamic_align)
 
     vertex_buffers := []vk.Buffer{vertex_buf}
     offsets := []vk.DeviceSize{0}
@@ -975,6 +1012,7 @@ main :: proc() {
     indices := []u16{0, 1, 2, 2, 3, 0}
 
     cubes: CubeData
+    cube_range: vk.DeviceSize
 
     vk_create_instance(&instance, &dbg_messenger)
     check(glfw.CreateWindowSurface(instance, win, nil, &surface))
@@ -985,9 +1023,13 @@ main :: proc() {
     vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
     vk_create_vertex_buffer(device, physical, command_pool, queue, vertices, &vertex_buffer, &vertex_buffer_mem)
     vk_create_index_buffer(device, physical, command_pool, queue, indices, &index_buffer, &index_buffer_mem)
-    uniform_buffers, uniform_buffers_mem, uniform_buffers_map, db, dbm, dum := vk_create_uniform_buffers(device, physical, &cubes)
+    camera_bufs, camera_buf_mems, camera_buf_maps, cube_bufs, cube_buf_mems, cube_buf_maps := vk_create_uniform_buffers(
+        device,
+        physical,
+        &cubes,
+        &cube_range)
     vk_create_descriptor_pool(device, &descriptor_pool)
-    sets := vk_create_descriptor_sets(device, uniform_buffers, descriptor_pool, descriptor_set_layout)
+    sets := vk_create_descriptor_sets(device, cube_range, cube_bufs, camera_bufs, descriptor_pool, descriptor_set_layout)
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
 
     frame := u32(0)
@@ -1013,10 +1055,13 @@ main :: proc() {
         }
 
         check(vk.ResetCommandBuffer(command_buffers[frame], {}))
+        dynamic_offset := []u32{u32(cube_range)}
+
         vk_record_command_buffer(
             command_buffers[frame], 
             image_index, 
             frame,
+            raw_data(dynamic_offset),
             extent, 
             images, 
             image_views, 
