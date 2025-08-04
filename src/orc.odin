@@ -739,15 +739,12 @@ find_supported_format :: proc(physical: vk.PhysicalDevice) -> vk.Format {
 vk_create_depth_resources :: proc(
     device: vk.Device, 
     physical: vk.PhysicalDevice, 
-    pool: vk.CommandPool,
-    queue: vk.Queue,
     extent: vk.Extent2D,
     depth_image: ^vk.Image,
     depth_image_view: ^vk.ImageView,
     depth_image_mem: ^vk.DeviceMemory)
 {
     depth_format := find_supported_format(physical)
-    log.info(depth_format)
 
     create_info := vk.ImageCreateInfo { sType = .IMAGE_CREATE_INFO,
         imageType = .D2,
@@ -761,11 +758,10 @@ vk_create_depth_resources :: proc(
         format = depth_format,
         tiling = .OPTIMAL,
         initialLayout = .UNDEFINED,
-        usage = {.DEPTH_STENCIL_ATTACHMENT},
+        usage = {.DEPTH_STENCIL_ATTACHMENT, .TRANSFER_SRC},
         samples = {._1},
         sharingMode = .EXCLUSIVE,
     }
-
     check(vk.CreateImage(device, &create_info, nil, depth_image))
 
     mem_reqs: vk.MemoryRequirements
@@ -775,7 +771,6 @@ vk_create_depth_resources :: proc(
         allocationSize = mem_reqs.size,
         memoryTypeIndex = find_memory_type(physical, mem_reqs.memoryTypeBits, {.DEVICE_LOCAL}),
     }
-
     check(vk.AllocateMemory(device, &alloc_info, nil, depth_image_mem))
     vk.BindImageMemory(device, depth_image^, depth_image_mem^, 0)
 
@@ -783,31 +778,9 @@ vk_create_depth_resources :: proc(
         image = depth_image^,
         viewType = .D2,
         format = depth_format,
-        subresourceRange = vk.ImageSubresourceRange {
-            aspectMask = {.DEPTH},
-            levelCount = 1,
-            layerCount = 1,
-        },
+        subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1, },
     }
-
     check(vk.CreateImageView(device, &view_info, nil, depth_image_view))
-
-    cmd_buf := vk_begin_single_time_commands(device, pool)
-
-    barrier := vk.ImageMemoryBarrier { sType = .IMAGE_MEMORY_BARRIER,
-        oldLayout = .UNDEFINED,
-        newLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-        dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-        image = depth_image^,
-        subresourceRange = { aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1 },
-        srcAccessMask = {},
-        dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_READ, .DEPTH_STENCIL_ATTACHMENT_WRITE},
-    }
-
-    vk.CmdPipelineBarrier(cmd_buf, {.TOP_OF_PIPE}, {.EARLY_FRAGMENT_TESTS}, {}, 0, nil, 0, nil, 1, &barrier)
-
-    vk_end_single_time_commands(device, pool, queue, cmd_buf)
 }
 
 vk_create_descriptor_set_layout :: proc(device: vk.Device, layout: ^vk.DescriptorSetLayout) {
@@ -975,12 +948,11 @@ vk_end_single_time_commands :: proc(
 vk_record_command_buffer :: proc(
     buffer: vk.CommandBuffer, 
     index: u32,
-    image: u32,
     frame: u32,
     dynamic_align: [^]u32,
     extent: vk.Extent2D,
-    images: []vk.Image,
-    image_views: []vk.ImageView,
+    image: vk.Image,
+    image_view: vk.ImageView,
     depth_image: vk.Image,
     depth_image_view: vk.ImageView,
     descriptor_sets: [MAX_FRAMES_BETWEEN]vk.DescriptorSet,
@@ -998,18 +970,29 @@ vk_record_command_buffer :: proc(
         dstAccessMask = {.COLOR_ATTACHMENT_WRITE},
         oldLayout = .UNDEFINED,
         newLayout = .COLOR_ATTACHMENT_OPTIMAL,
-        image = images[image],
+        image = image,
         subresourceRange = { aspectMask =  {.COLOR}, levelCount = 1, layerCount = 1, },
     }
-    vk.CmdPipelineBarrier(buffer, {.TOP_OF_PIPE}, {.COLOR_ATTACHMENT_OUTPUT}, {}, 0, nil, 0, nil, 1, &image_to_draw_barrier)
+    vk.CmdPipelineBarrier(buffer, {.COLOR_ATTACHMENT_OUTPUT}, {.COLOR_ATTACHMENT_OUTPUT}, {}, 0, nil, 0, nil, 1, &image_to_draw_barrier)
+
+    depth_barrier := vk.ImageMemoryBarrier { sType = .IMAGE_MEMORY_BARRIER,
+        image = depth_image,
+        srcAccessMask = {},
+        dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_READ, .DEPTH_STENCIL_ATTACHMENT_WRITE},
+        oldLayout = .UNDEFINED,
+        newLayout = .DEPTH_ATTACHMENT_OPTIMAL,
+        subresourceRange = { aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1, },
+    }
+    vk.CmdPipelineBarrier(buffer, {.TOP_OF_PIPE}, {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS}, {}, 0, nil, 0, nil, 1, &depth_barrier)
 
     gray : f32 = 0.008
     clear_color := vk.ClearValue{}
     clear_color.color.float32 = { gray, gray, gray, 1.0 }
 
     color_attachment_info := vk.RenderingAttachmentInfoKHR { sType = .RENDERING_ATTACHMENT_INFO_KHR,
-        imageView = image_views[image],
+        imageView = image_view,
         imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+        resolveMode = {},
         loadOp = .CLEAR,
         storeOp = .STORE,
         clearValue = clear_color,
@@ -1018,6 +1001,7 @@ vk_record_command_buffer :: proc(
     depth_attachment_info := vk.RenderingAttachmentInfoKHR { sType = .RENDERING_ATTACHMENT_INFO_KHR,
         imageView = depth_image_view,
         imageLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        resolveMode = {},
         loadOp = .CLEAR,
         storeOp = .STORE,
         clearValue = { depthStencil = { 1.0, 0 } },
@@ -1065,10 +1049,11 @@ vk_record_command_buffer :: proc(
     vk.CmdEndRenderingKHR(buffer)
     
     image_memory_barrier := vk.ImageMemoryBarrier{ sType = .IMAGE_MEMORY_BARRIER,
-        srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
+        image = image,
+        srcAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
+        dstAccessMask = {},
         oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
         newLayout = .PRESENT_SRC_KHR,
-        image = images[image],
         subresourceRange = { aspectMask = {.COLOR}, levelCount = 1, layerCount = 1, },
     }
     vk.CmdPipelineBarrier(buffer, {.COLOR_ATTACHMENT_OUTPUT}, {.BOTTOM_OF_PIPE}, {}, 0, nil, 0, nil, 1, &image_memory_barrier)
@@ -1086,7 +1071,7 @@ main :: proc() {
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
     glfw.WindowHint(glfw.RESIZABLE, glfw.TRUE)
 
-    win := glfw.CreateWindow(640, 480, "vorc", nil, nil)
+    win := glfw.CreateWindow(640, 480, "orc", nil, nil)
     defer glfw.DestroyWindow(win)
 
     instance: vk.Instance
@@ -1135,7 +1120,7 @@ main :: proc() {
     vk_create_descriptor_set_layout(device, &descriptor_set_layout)
     vk_create_graphics_pipeline(device, physical, format, extent, &descriptor_set_layout, &pipeline, &pipeline_layout)
     vk_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
-    vk_create_depth_resources(device, physical, command_pool, queue, extent, &depth_image, &depth_image_view, &depth_image_mem)
+    vk_create_depth_resources(device, physical, extent, &depth_image, &depth_image_view, &depth_image_mem)
     vk_create_vertex_buffer(device, physical, command_pool, queue, vertices, &vertex_buffer, &vertex_buffer_mem)
     vk_create_index_buffer(device, physical, command_pool, queue, indices, &index_buffer, &index_buffer_mem)
     camera_bufs, camera_buf_mems, camera_buf_maps, cube_bufs, cube_buf_mems, cube_buf_maps := vk_create_uniform_buffers(
@@ -1174,13 +1159,12 @@ main :: proc() {
 
         vk_record_command_buffer(
             command_buffers[frame], 
-            image_index, 
             family_index,
             frame,
             raw_data(dynamic_offset),
             extent, 
-            images, 
-            image_views, 
+            images[image_index], 
+            image_views[image_index], 
             depth_image,
             depth_image_view,
             sets,
