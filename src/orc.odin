@@ -4,6 +4,7 @@ import "base:runtime"
 
 import "core:log"
 import "core:mem"
+import "core:math"
 import "core:slice"
 import "core:strings"
 
@@ -153,7 +154,7 @@ vk_create_device :: proc(
     for i : u32 = 0; i < count; i += 1 {
         ext_count: u32 = 0
         vk.EnumerateDeviceExtensionProperties(physical_devices[i], nil, &ext_count, nil)
-    log.info("story")
+
         exts:= make([^]vk.ExtensionProperties, ext_count, g_ctx.temp_allocator)
         vk.EnumerateDeviceExtensionProperties(physical_devices[i], nil, &ext_count, exts)
 
@@ -519,7 +520,7 @@ vk_create_uniform_buffers :: proc(
 
     min_ubo_align := props.limits.minUniformBufferOffsetAlignment
     dynamic_align := vk.DeviceSize(size_of(matrix[4,4]f32))
-    log.info(min_ubo_align)
+
     if min_ubo_align > 0 {
         dynamic_align = (dynamic_align + min_ubo_align - 1) & ~(min_ubo_align - 1)
     }
@@ -878,11 +879,11 @@ vk_create_descriptor_sets :: proc(
         }
         write_descs[i * 2 + 1] = vk.WriteDescriptorSet { sType = .WRITE_DESCRIPTOR_SET,
             dstSet = sets[i],
-            dstBinding = 0,
+            dstBinding = 1,
             dstArrayElement = 0,
-            descriptorType = .UNIFORM_BUFFER,
+            descriptorType = .UNIFORM_BUFFER_DYNAMIC,
             descriptorCount = 1,
-            pBufferInfo = &buffer_info,
+            pBufferInfo = &dynamic_buffer_info,
         }
     }
 
@@ -1103,12 +1104,16 @@ main :: proc() {
     fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
     vertices := []Vertex{
-        {{-0.5, -0.5, 0.0}},
-        {{0.5,  -0.5, 0.0}},
-        {{0.5,  0.5 , 0.0}},
-        {{-0.5, 0.5 , 0.0}}
+        {{-1.0, -1.0, 1.0}},
+	    {{1.0, -1.0, 1.0}},
+	    {{1.0, 1.0, 1.0}},
+	    {{-1.0, 1.0, 1.0}},
+	    {{-1.0, -1.0, -1.0}},
+	    {{1.0, -1.0, -1.0}},
+	    {{1.0, 1.0, -1.0}},
+	    {{-1.0, 1.0, -1.0}},
     }
-    indices := []u16{0, 1, 2, 2, 3, 0}
+    indices := []u16{0, 1, 2, 2, 3, 0, 1, 5, 6,	6, 2, 1, 7, 6, 5, 5, 4, 7, 4, 0, 3, 3, 7, 4, 4, 5, 1, 1, 0, 4, 3, 2, 6}
 
     cubes: CubeData
     cube_range: vk.DeviceSize
@@ -1133,6 +1138,46 @@ main :: proc() {
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
 
     frame := u32(0)
+    angle: f32 = 0.0 * math.PI / 180.0
+
+    B := matrix[4,4]f32{
+        math.cos_f32(0), math.sin_f32(0), 0, 0,
+        -math.sin_f32(0), math.cos_f32(0), 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    }
+    P := matrix[4,4]f32{
+        1, 0, 0, 0,
+        0, math.cos_f32(angle), math.sin_f32(angle), 0,
+        0, -math.sin_f32(angle), math.cos_f32(angle), 0,
+        0, 0, 0, 1,
+    }
+    H := matrix[4,4]f32{
+        math.cos_f32(0), 0, -math.sin_f32(0), 0,
+        0, 1, 0, 0,
+        math.sin_f32(0), 0, math.cos_f32(0), 0,
+        0, 0, 0, 1,
+    }
+
+    cubes.models[0] = { 
+        0.1,0,0,0,
+        0,0.1,0,0,
+        0,0,0.1,0,
+        0,0,0,0.1,
+    }
+
+    camera := matrix[4,4]f32{
+        1,0,0,0,
+        0,1,0,0,
+        0,0,1,0,
+        0,0,0,1,
+    }
+
+    mem.copy(cube_buf_maps[0], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
+    mem.copy(cube_buf_maps[1], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
+
+    mem.copy(camera_buf_maps[0], raw_data(&camera), size_of(camera))
+    mem.copy(camera_buf_maps[1], raw_data(&camera), size_of(camera))
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
@@ -1156,12 +1201,14 @@ main :: proc() {
 
         check(vk.ResetCommandBuffer(command_buffers[frame], {}))
         dynamic_offset := []u32{u32(cube_range)}
+        zero := []u32{0}
 
         vk_record_command_buffer(
             command_buffers[frame], 
             family_index,
             frame,
-            raw_data(dynamic_offset),
+            //raw_data(dynamic_offset),
+            raw_data(zero),
             extent, 
             images[image_index], 
             image_views[image_index], 
