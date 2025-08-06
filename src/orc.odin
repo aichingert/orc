@@ -32,8 +32,8 @@ CubeData :: struct {
 }
 
 Vertex :: struct {
-    pos : [3]f32,
-    // x, y, z : f32,
+    pos: [3]f32,
+    col: [3]f32,
 }
 
 check :: proc(result: vk.Result, loc := #caller_location) {
@@ -461,7 +461,7 @@ vk_create_vertex_buffer :: proc(
     size := size_of(Vertex) * vk.DeviceSize(len(vertices))
     staging_buf: vk.Buffer
     staging_buf_mem: vk.DeviceMemory
-    vk_create_buffer(device, physical, size, {.TRANSFER_SRC},  {.HOST_VISIBLE, .HOST_COHERENT}, &staging_buf, &staging_buf_mem)
+    vk_create_buffer(device, physical, size, {.TRANSFER_SRC}, {.HOST_VISIBLE, .HOST_COHERENT}, &staging_buf, &staging_buf_mem)
 
     data: rawptr
     vk.MapMemory(device, staging_buf_mem, 0, size, {}, &data)
@@ -487,7 +487,7 @@ vk_create_index_buffer :: proc(
     size := size_of(indices[0]) * vk.DeviceSize(len(indices))
     staging_buf: vk.Buffer
     staging_buf_mem: vk.DeviceMemory
-    vk_create_buffer(device, physical, size, {.TRANSFER_SRC},  {.HOST_VISIBLE, .HOST_COHERENT}, &staging_buf, &staging_buf_mem)
+    vk_create_buffer(device, physical, size, {.TRANSFER_SRC}, {.HOST_VISIBLE, .HOST_COHERENT}, &staging_buf, &staging_buf_mem)
 
     data: rawptr
     vk.MapMemory(device, staging_buf_mem, 0, size, {}, &data)
@@ -593,24 +593,35 @@ vk_create_graphics_pipeline :: proc(
         pDynamicStates    = raw_data(dynamic_states),
     }
 
-    binding_desc := vk.VertexInputBindingDescription {
-        binding = 0,
-        stride = size_of(Vertex),
-        inputRate = .VERTEX,
+    binding_descs := []vk.VertexInputBindingDescription {
+        {
+            binding = 0,
+            stride = size_of(Vertex),
+            inputRate = .VERTEX,
+        },
     }
-    attribute_desc := vk.VertexInputAttributeDescription {
-        binding = 0,
-        location = 0,
-        format = .R32G32B32_SFLOAT,
-        offset = 0,
+
+    attribute_descs := []vk.VertexInputAttributeDescription {
+        {
+            binding = 0,
+            location = 0,
+            format = .R32G32B32_SFLOAT,
+            offset = 0,
+        },
+        {
+            binding = 0,
+            location = 1,
+            format = .R32G32B32_SFLOAT,
+            offset = 12,
+        }
     }
 
     vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
         sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        vertexBindingDescriptionCount = 1,
-        pVertexBindingDescriptions    = &binding_desc,
-        vertexAttributeDescriptionCount = 1,
-        pVertexAttributeDescriptions  = &attribute_desc,
+        vertexBindingDescriptionCount = u32(len(binding_descs)),
+        pVertexBindingDescriptions    = raw_data(binding_descs),
+        vertexAttributeDescriptionCount = u32(len(attribute_descs)),
+        pVertexAttributeDescriptions  = raw_data(attribute_descs),
     }
 
     input_assembly := vk.PipelineInputAssemblyStateCreateInfo {
@@ -1104,16 +1115,43 @@ main :: proc() {
     fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
     vertices := []Vertex{
-        {{-1.0, -1.0, 1.0}},
-	    {{1.0, -1.0, 1.0}},
-	    {{1.0, 1.0, 1.0}},
-	    {{-1.0, 1.0, 1.0}},
-	    {{-1.0, -1.0, -1.0}},
-	    {{1.0, -1.0, -1.0}},
-	    {{1.0, 1.0, -1.0}},
-	    {{-1.0, 1.0, -1.0}},
+        // left face (white)
+        {{-.5, -.5, -.5}, {.9, .9, .9}},
+        {{-.5, .5, .5}, {.9, .9, .9}},
+        {{-.5, -.5, .5}, {.9, .9, .9}},
+        {{-.5, .5, -.5}, {.9, .9, .9}},
+
+        // right face (yellow)
+        {{.5, -.5, -.5}, {.8, .8, .1}},
+        {{.5, .5, .5}, {.8, .8, .1}},
+        {{.5, -.5, .5}, {.8, .8, .1}},
+        {{.5, .5, -.5}, {.8, .8, .1}},
+
+        // top face (orange, remember y axis points down)
+        {{-.5, -.5, -.5}, {.9, .6, .1}},
+        {{.5, -.5, .5}, {.9, .6, .1}},
+        {{-.5, -.5, .5}, {.9, .6, .1}},
+        {{.5, -.5, -.5}, {.9, .6, .1}},
+
+        // bottom face (red)
+        {{-.5, .5, -.5}, {.8, .1, .1}},
+        {{.5, .5, .5}, {.8, .1, .1}},
+        {{-.5, .5, .5}, {.8, .1, .1}},
+        {{.5, .5, -.5}, {.8, .1, .1}},
+
+        // nose face (blue)
+        {{-.5, -.5, 0.5}, {.1, .1, .8}},
+        {{.5, .5, 0.5}, {.1, .1, .8}},
+        {{-.5, .5, 0.5}, {.1, .1, .8}},
+        {{.5, -.5, 0.5}, {.1, .1, .8}},
+
+        // tail face (green)
+        {{-.5, -.5, -0.5}, {.1, .8, .1}},
+        {{.5, .5, -0.5}, {.1, .8, .1}},
+        {{-.5, .5, -0.5}, {.1, .8, .1}},
+        {{.5, -.5, -0.5}, {.1, .8, .1}},
     }
-    indices := []u16{0, 1, 2, 2, 3, 0, 1, 5, 6,	6, 2, 1, 7, 6, 5, 5, 4, 7, 4, 0, 3, 3, 7, 4, 4, 5, 1, 1, 0, 4, 3, 2, 6}
+    indices := []u16{0, 1, 2, 0, 3, 1, 4, 5, 6, 4, 7, 5, 8, 9, 10, 8, 11, 9, 12, 13, 14, 12, 15, 13, 16, 17, 18, 16, 19, 17, 20, 21, 22, 20, 23, 21}
 
     cubes: CubeData
     cube_range: vk.DeviceSize
@@ -1138,7 +1176,7 @@ main :: proc() {
     vk_create_sync_structures(device, &image_avail, &render_done, &fences)
 
     frame := u32(0)
-    angle: f32 = 0.0 * math.PI / 180.0
+    angle: f32 = 10.0 * math.PI / 180.0
 
     B := matrix[4,4]f32{
         math.cos_f32(0), math.sin_f32(0), 0, 0,
@@ -1162,15 +1200,23 @@ main :: proc() {
     cubes.models[0] = { 
         0.1,0,0,0,
         0,0.1,0,0,
-        0,0,0.1,0,
-        0,0,0,0.1,
-    }
-
-    camera := matrix[4,4]f32{
-        1,0,0,0,
-        0,1,0,0,
-        0,0,1,0,
+        0,0,0.1,-.5,
         0,0,0,1,
+    } * B * P * H
+
+    aspect_ratio := f32(extent.width) / f32(extent.height)
+    fovy         := 50.0 * f32(math.PI) / 180.0
+    tan_half     := math.tan_f32(fovy / 2.0)
+    near         := f32(0.1)
+    far          := f32(10.0)
+
+    // TODO: read some more from
+    // https://www.gamemath.com/book/matrixmore.html#perspective_projection
+    camera := matrix[4,4]f32{
+        1.0 / (aspect_ratio * tan_half),0,0,0,
+        0,1.0 / tan_half ,0,0,
+        0,0,far / (far - near),1.0,
+        0,0,-(far * near) / (far - near), 1.0,
     }
 
     mem.copy(cube_buf_maps[0], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
