@@ -991,7 +991,7 @@ ren_record_command_buffer :: proc(
         imageLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         resolveMode = {},
         loadOp = .CLEAR,
-        storeOp = .STORE,
+        storeOp = {},
         clearValue = { depthStencil = { 1.0, 0 } },
     }
 

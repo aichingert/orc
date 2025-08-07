@@ -33,31 +33,20 @@ Vertex :: struct {
     col: [3]f32,
 }
 
-cube_rotate :: proc(model: matrix[4,4]f32, y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
-    // y -> upright y axis ; heading
-    // x -> object  x axis ; pitch
-    // z -> upright z axis ; bank
+cube_rotate :: proc(translate: [3]f32, scale: [3]f32, rotation: [3]f32) -> matrix[4,4]f32 {
+    c3 := math.cos_f32(rotation.z)
+    s3 := math.sin_f32(rotation.z)
+    c2 := math.cos_f32(rotation.x)
+    s2 := math.sin_f32(rotation.x)
+    c1 := math.cos_f32(rotation.y)
+    s1 := math.sin_f32(rotation.y)
 
-    B := matrix[4,4]f32{
-        math.cos_f32(z), math.sin_f32(z), 0, 0,
-        -math.sin_f32(z), math.cos_f32(z), 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1,
+    return matrix[4,4]f32 {
+        scale.x * (c1 * c3 + s1 * s2 * s3), scale.x * (c2 * s3), scale.x * (c1 * s2 * s3 - c3 * s1), 0,
+        scale.y * (c3 * s1 * s2 - c1 * s3), scale.y * (c2 * c3), scale.y * (c1 * c3 * s2 + s1 * s3), 0,
+        scale.z * (c2 * s1), scale.z * (-s2), scale.z * (c1 * c2), 0,
+        translate.x, translate.y, translate.z, 1,
     }
-    P := matrix[4,4]f32{
-        1, 0, 0, 0,
-        0, math.cos_f32(x), math.sin_f32(x), 0,
-        0, -math.sin_f32(x), math.cos_f32(x), 0,
-        0, 0, 0, 1,
-    }
-    H := matrix[4,4]f32{
-        math.cos_f32(y), 0, -math.sin_f32(y), 0,
-        0, 1, 0, 0,
-        math.sin_f32(y), 0, math.cos_f32(y), 0,
-        0, 0, 0, 1,
-    }
-
-    return model * B * P * H
 }
 
 main :: proc() {
@@ -163,40 +152,37 @@ main :: proc() {
     ren_create_sync_structures(device, &image_avail, &render_done, &fences)
 
     frame := u32(0)
-    angle: f32 = 0// math.to_radians_f32(10.0)
+    angle: f32 = 0
 
     aspect_ratio := f32(extent.width) / f32(extent.height)
-    fovy         := 50.0 * f32(math.PI) / 180.0
-    tan_half     := math.tan_f32(fovy / 2.0)
+    fovy         := math.to_radians_f32(120)
+    tan_half     := math.tan_f32(fovy / 2)
     near         := f32(0.1)
-    far          := f32(10.0)
+    far          := f32(10)
 
     /*
-    projectionMatrix = glm::mat4{1.0f};
-  projectionMatrix[0][0] = 2.f / (right - left);
-  projectionMatrix[1][1] = 2.f / (bottom - top);
-  projectionMatrix[2][2] = 1.f / (far - near);
-  projectionMatrix[3][0] = -(right + left) / (right - left);
-  projectionMatrix[3][1] = -(bottom + top) / (bottom - top);
-  projectionMatrix[3][2] = -near / (far - near);
-    */
-    // camera.setOrthographicProjection(-aspect, aspect, -1, 1, -1, 1);
     camera := matrix[4,4]f32{
         2 / (aspect_ratio + aspect_ratio), 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1 / 2, 0,
         0, 0, 1 / 2, 1,
     }
+    */
     // TODO: read some more from
     // https://www.gamemath.com/book/matrixmore.html#perspective_projection
-    /*
+
     camera := matrix[4,4]f32{
-        1.0 / (aspect_ratio * tan_half),0,0,0,
-        0,1.0 / tan_half ,0,0,
-        0,0,far / (far - near),1.0,
-        0,0,-(far * near) / (far - near), 1.0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
     } 
-    */
+
+    camera[0][0] = 1 / (aspect_ratio * tan_half)
+    camera[1][1] = 1 / (tan_half)
+    camera[2][2] = far / (far - near)
+    camera[2][3] = 1
+    camera[3][2] = -(far * near) / (far - near)
 
     mem.copy(camera_buf_maps[0], raw_data(&camera), size_of(camera))
     mem.copy(camera_buf_maps[1], raw_data(&camera), size_of(camera))
@@ -278,14 +264,9 @@ main :: proc() {
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
 
         if frame == 0 {
-            angle += 0.001
-            cubes.models[0] = { 
-                .5,0,0,0,
-                0,.5,0,0,
-                0,0,.5,0,
-                0,0,0,1,
-            }
-            cubes.models[0] = cube_rotate(cubes.models[0], angle / 2, angle, 0) 
+            log.info(angle)
+            angle += 0.00001
+            cubes.models[0] = cube_rotate({0, 0, 2.5}, {0.5, 0.5, 0.5}, {angle, angle, 0}) 
 
             mem.copy(cube_buf_maps[0], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
             mem.copy(cube_buf_maps[1], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
