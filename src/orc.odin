@@ -13,19 +13,22 @@ import vk "vendor:vulkan"
 
 g_ctx: runtime.Context
 
-CUBES :: 3 * 9
-MAX_FRAMES_BETWEEN :: 2
+UNIT                :: 1.5
+SIZE                :: 3
+CUBES               :: SIZE * SIZE * SIZE
 
-UNIFORM_BUFFER_BINDING :: 0
-UNIFORM_BUFFER_DYNAMIC_BINDING :: 1
+MAX_FRAMES_BETWEEN  :: 2
+
+UNIFORM_BUFFER_BINDING          :: 0
+UNIFORM_BUFFER_DYNAMIC_BINDING  :: 1
 
 Camera :: struct {
     view : matrix[4,4]f32,
     proj : matrix[4,4]f32,
 }
 
-CubeData :: struct {
-    models: []matrix[4, 4]f32,
+RubiksCube :: struct {
+    cubes: []matrix[4,4]f32,
 }
 
 Vertex :: struct {
@@ -33,7 +36,29 @@ Vertex :: struct {
     col: [3]f32,
 }
 
-cube_rotate :: proc(model: matrix[4,4]f32, y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
+rubiks_cube_init :: proc(rubik: ^RubiksCube) {
+    for dim in 0..< SIZE {
+        mat := matrix[4,4]f32{
+            1, 0, 0, -UNIT,
+            0, 1, 0, UNIT,
+            0, 0, 1, 5 + UNIT * f32(dim),
+            0, 0, 0, 1,
+        }
+
+        for row in 0..< SIZE {
+            for col in 0..< SIZE {
+                rubik.cubes[dim * SIZE * SIZE + row * SIZE + col] = mat
+                mat[0, 3] += UNIT
+            }
+
+            mat[1, 3] -= UNIT
+            mat[0, 3] = -UNIT
+        }
+    }
+}
+
+
+cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
     // y -> upright y axis ; heading -> yaw
     // x -> object  x axis ; pitch   -> pitch
     // z -> upright z axis ; bank    -> roll
@@ -59,7 +84,7 @@ cube_rotate :: proc(model: matrix[4,4]f32, y: f32, x: f32, z: f32) -> matrix[4,4
         0, 0, 0, 1,
     }
 
-    return model * B * P * H
+    return B * P * H
 }
 
 main :: proc() {
@@ -142,7 +167,7 @@ main :: proc() {
     }
     indices := []u16{0, 1, 2, 0, 3, 1, 4, 5, 6, 4, 7, 5, 8, 9, 10, 8, 11, 9, 12, 13, 14, 12, 15, 13, 16, 17, 18, 16, 19, 17, 20, 21, 22, 20, 23, 21}
 
-    cubes: CubeData
+    rubik: RubiksCube 
     cube_range: vk.DeviceSize
 
     ren_create_instance(&instance, &dbg_messenger)
@@ -158,7 +183,7 @@ main :: proc() {
     camera_bufs, camera_buf_mems, camera_buf_maps, cube_bufs, cube_buf_mems, cube_buf_maps := ren_create_uniform_buffers(
         device,
         physical,
-        &cubes,
+        &rubik,
         &cube_range)
     ren_create_descriptor_pool(device, &descriptor_pool)
     sets := ren_create_descriptor_sets(device, cube_range, cube_bufs, camera_bufs, descriptor_pool, descriptor_set_layout)
@@ -172,9 +197,6 @@ main :: proc() {
     tan_half     := math.tan_f32(fovy / 2)
     near         := f32(.1)
     far          := f32(10)
-
-    // TODO: read some more from
-    // https://www.gamemath.com/book/matrixmore.html#perspective_projection
 
     camera := matrix[4,4]f32{
         0, 0, 0, 0,
@@ -191,6 +213,8 @@ main :: proc() {
 
     mem.copy(camera_buf_maps[0], raw_data(&camera), size_of(camera))
     mem.copy(camera_buf_maps[1], raw_data(&camera), size_of(camera))
+
+    rubiks_cube_init(&rubik)
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
@@ -266,29 +290,22 @@ main :: proc() {
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
 
         if frame == 0 {
-            angle += 0.0001
+            /*
+            angle += 0.00001
 
-            cubes.models[0] = { 
-                .5,0,0,1,
-                0,.5,0,0,
-                0,0,.5,1.5,
-                0,0,0,1,
+            models := [CUBES]matrix[4,4]f32{} 
+            mem.copy(&models, &rubik.cubes, CUBES * size_of(rubik.cubes[0]))
+
+            for i in 0..< CUBES {
+                models[i] = models[i] * cube_rotate(angle, 0, 0)
             }
-            cubes.models[0] = cube_rotate(cubes.models[0], angle, angle, 0)
 
-            cubes.models[1] = { 
-                .5,0,0,-1,
-                0,.5,0,0,
-                0,0,.5,1.5,
-                0,0,0,1,
-            }
-            cubes.models[1] = cube_rotate(cubes.models[1], angle, angle, 0)
-
-            models := []matrix[4,4]f32{cubes.models[0], cubes.models[1]}
-
-            mem.copy(cube_buf_maps[0], raw_data(models), len(models) * size_of(cubes.models[0]))
-            mem.copy(cube_buf_maps[1], raw_data(models), len(models) * size_of(cubes.models[0]))
+            mem.copy(cube_buf_maps[1], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
+            */
         }
+
+        mem.copy(cube_buf_maps[0], raw_data(rubik.cubes), CUBES * size_of(rubik.cubes[0]))
+        mem.copy(cube_buf_maps[1], raw_data(rubik.cubes), CUBES * size_of(rubik.cubes[0]))
     }
 
     vk.DeviceWaitIdle(device)

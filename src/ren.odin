@@ -480,7 +480,7 @@ ren_create_index_buffer :: proc(
 ren_create_uniform_buffers :: proc(
     device: vk.Device,
     physical: vk.PhysicalDevice,
-    cubes: ^CubeData,
+    rubik: ^RubiksCube,
     cube_range: ^vk.DeviceSize,
 ) -> (
     camera_buffers: [MAX_FRAMES_BETWEEN]vk.Buffer,
@@ -506,7 +506,7 @@ ren_create_uniform_buffers :: proc(
     models, err := mem.make_aligned([]matrix[4,4]f32, CUBES, int(dynamic_align))
     assert(err == .None, "Error: failed to allocate")
 
-    cubes.models = models
+    rubik.cubes = models
     size := vk.DeviceSize(size_of(Camera))
 
     for i in 0 ..< MAX_FRAMES_BETWEEN {
