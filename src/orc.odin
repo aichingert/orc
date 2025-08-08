@@ -34,9 +34,9 @@ Vertex :: struct {
 }
 
 cube_rotate :: proc(model: matrix[4,4]f32, y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
-    // y -> upright y axis ; heading
-    // x -> object  x axis ; pitch
-    // z -> upright z axis ; bank
+    // y -> upright y axis ; heading -> yaw
+    // x -> object  x axis ; pitch   -> pitch
+    // z -> upright z axis ; bank    -> roll
 
     B := matrix[4,4]f32{
         math.cos_f32(z), math.sin_f32(z), 0, 0,
@@ -213,15 +213,12 @@ main :: proc() {
         }
 
         check(vk.ResetCommandBuffer(command_buffers[frame], {}))
-        dynamic_offset := []u32{u32(cube_range)}
-        zero := []u32{0}
 
         ren_record_command_buffer(
             command_buffers[frame], 
             family_index,
             frame,
-            //raw_data(dynamic_offset),
-            raw_data(zero),
+            u32(cube_range),
             extent, 
             images[image_index], 
             image_views[image_index], 
@@ -269,17 +266,28 @@ main :: proc() {
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
 
         if frame == 0 {
-            angle += 0.00001
+            angle += 0.0001
+
             cubes.models[0] = { 
-                .5,0,0,0,
+                .5,0,0,1,
                 0,.5,0,0,
                 0,0,.5,1.5,
                 0,0,0,1,
             }
             cubes.models[0] = cube_rotate(cubes.models[0], angle, angle, 0)
 
-            mem.copy(cube_buf_maps[0], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
-            mem.copy(cube_buf_maps[1], raw_data(&cubes.models[0]), size_of(cubes.models[0]))
+            cubes.models[1] = { 
+                .5,0,0,-1,
+                0,.5,0,0,
+                0,0,.5,1.5,
+                0,0,0,1,
+            }
+            cubes.models[1] = cube_rotate(cubes.models[1], angle, angle, 0)
+
+            models := []matrix[4,4]f32{cubes.models[0], cubes.models[1]}
+
+            mem.copy(cube_buf_maps[0], raw_data(models), len(models) * size_of(cubes.models[0]))
+            mem.copy(cube_buf_maps[1], raw_data(models), len(models) * size_of(cubes.models[0]))
         }
     }
 

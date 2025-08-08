@@ -937,7 +937,7 @@ ren_record_command_buffer :: proc(
     buffer: vk.CommandBuffer, 
     index: u32,
     frame: u32,
-    dynamic_align: [^]u32,
+    dynamic_align: u32,
     extent: vk.Extent2D,
     image: vk.Image,
     image_view: vk.ImageView,
@@ -1025,15 +1025,20 @@ ren_record_command_buffer :: proc(
     vk.CmdSetViewport(buffer, 0, 1, &viewport)
     vk.CmdSetScissor(buffer, 0, 1, &scissor)
 
-    set := descriptor_sets[frame]
-    vk.CmdBindDescriptorSets(buffer, .GRAPHICS, pipeline_layout, 0, 1, &set, 1, dynamic_align)
-
-    vertex_buffers := []vk.Buffer{vertex_buf}
+    vertex_buffers : []vk.Buffer = {vertex_buf}
     offsets := []vk.DeviceSize{0}
     vk.CmdBindVertexBuffers(buffer, 0, 1, raw_data(vertex_buffers), raw_data(offsets))
     vk.CmdBindIndexBuffer(buffer, index_buf, 0, .UINT16)
 
-    vk.CmdDrawIndexed(buffer, index_cnt, 1, 0, 0, 0)
+    set := descriptor_sets[frame]
+
+    for i in 0..<CUBES {
+        offset := u32(i) * dynamic_align
+
+        vk.CmdBindDescriptorSets(buffer, .GRAPHICS, pipeline_layout, 0, 1, &set, 1, &offset)
+        vk.CmdDrawIndexed(buffer, index_cnt, 1, 0, 0, 0)
+    }
+
     vk.CmdEndRenderingKHR(buffer)
     
     image_memory_barrier := vk.ImageMemoryBarrier{ sType = .IMAGE_MEMORY_BARRIER,
