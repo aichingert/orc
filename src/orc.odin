@@ -38,6 +38,8 @@ Vertex :: struct {
 
 rubiks_cube_init :: proc(rubik: ^RubiksCube) {
     for dim in 0..< SIZE {
+        // TODO: fix calculation to center any cube
+
         mat := matrix[4,4]f32{
             1, 0, 0, -UNIT,
             0, 1, 0, UNIT,
@@ -57,12 +59,7 @@ rubiks_cube_init :: proc(rubik: ^RubiksCube) {
     }
 }
 
-
 cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
-    // y -> upright y axis ; heading -> yaw
-    // x -> object  x axis ; pitch   -> pitch
-    // z -> upright z axis ; bank    -> roll
-
     B := matrix[4,4]f32{
         math.cos_f32(z), math.sin_f32(z), 0, 0,
         -math.sin_f32(z), math.cos_f32(z), 0, 0,
@@ -87,6 +84,29 @@ cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
     return B * P * H
 }
 
+g_rubiks: ^RubiksCube = nil
+
+
+key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action: i32, mods: i32) {
+    if key == glfw.KEY_D && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        for &cube in g_rubiks.cubes {
+            cube[0, 3] += 0.1
+        }   
+    } else if key == glfw.KEY_A && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        for &cube in g_rubiks.cubes {
+            cube[0, 3] -= 0.1
+        }
+    } else if key == glfw.KEY_W && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        for &cube in g_rubiks.cubes {
+            cube[1, 3] -= 0.1
+        }
+    } else if key == glfw.KEY_S && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        for &cube in g_rubiks.cubes {
+            cube[1, 3] += 0.1
+        }
+    }
+}
+
 main :: proc() {
     context.logger = log.create_console_logger()
     g_ctx = context
@@ -99,6 +119,8 @@ main :: proc() {
 
     win := glfw.CreateWindow(640, 480, "orc", nil, nil)
     defer glfw.DestroyWindow(win)
+
+    glfw.SetKeyCallback(win, key_pressed)
 
     instance: vk.Instance
     dbg_messenger: vk.DebugUtilsMessengerEXT
@@ -129,37 +151,26 @@ main :: proc() {
     fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
     vertices := []Vertex{
-        // left face (white)
         {{-.5, -.5, -.5}, {.9, .9, .9}},
         {{-.5, .5, .5}, {.9, .9, .9}},
         {{-.5, -.5, .5}, {.9, .9, .9}},
         {{-.5, .5, -.5}, {.9, .9, .9}},
-
-        // right face (yellow)
         {{.5, -.5, -.5}, {.8, .8, .1}},
         {{.5, .5, .5}, {.8, .8, .1}},
         {{.5, -.5, .5}, {.8, .8, .1}},
         {{.5, .5, -.5}, {.8, .8, .1}},
-
-        // top face (orange, remember y axis points down)
         {{-.5, -.5, -.5}, {.9, .6, .1}},
         {{.5, -.5, .5}, {.9, .6, .1}},
         {{-.5, -.5, .5}, {.9, .6, .1}},
         {{.5, -.5, -.5}, {.9, .6, .1}},
-
-        // bottom face (red)
         {{-.5, .5, -.5}, {.8, .1, .1}},
         {{.5, .5, .5}, {.8, .1, .1}},
         {{-.5, .5, .5}, {.8, .1, .1}},
         {{.5, .5, -.5}, {.8, .1, .1}},
-
-        // nose face (blue)
         {{-.5, -.5, 0.5}, {.1, .1, .8}},
         {{.5, .5, 0.5}, {.1, .1, .8}},
         {{-.5, .5, 0.5}, {.1, .1, .8}},
         {{.5, -.5, 0.5}, {.1, .1, .8}},
-
-        // tail face (green)
         {{-.5, -.5, -0.5}, {.1, .8, .1}},
         {{.5, .5, -0.5}, {.1, .8, .1}},
         {{-.5, .5, -0.5}, {.1, .8, .1}},
@@ -215,6 +226,10 @@ main :: proc() {
     mem.copy(camera_buf_maps[1], raw_data(&camera), size_of(camera))
 
     rubiks_cube_init(&rubik)
+    g_rubiks = &rubik
+
+    s := SIZE * SIZE
+    d := math.sqrt(math.pow(rubik.cubes[0][0, 3] - rubik.cubes[s - 1][0, 3], 2), )
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
