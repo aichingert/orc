@@ -228,8 +228,27 @@ main :: proc() {
     rubiks_cube_init(&rubik)
     g_rubiks = &rubik
 
-    s := SIZE * SIZE
-    d := math.sqrt(math.pow(rubik.cubes[0][0, 3] - rubik.cubes[s - 1][0, 3], 2), )
+
+    for i in 0..< SIZE {
+        for j in 0..< SIZE {
+            model := rubik.cubes[i * SIZE + j]
+
+            r := math.sqrt(math.pow(model[0, 3], 2) + math.pow(model[1, 3], 2))
+            if r == 0 { continue }
+
+            angle := math.PI / 4 - math.acos(model[0, 3] / r)
+
+            x := math.cos(angle)
+            y := math.sin(angle)
+
+            log.info(x, y)
+            log.info(rubik.cubes[i * SIZE + j][0, 3], rubik.cubes[i * SIZE + j][1, 3])
+
+            rubik.cubes[i * SIZE + j][0, 3] = x
+            rubik.cubes[i * SIZE + j][1, 3] = y
+        }
+    }
+
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
