@@ -27,8 +27,15 @@ Camera :: struct {
     proj : matrix[4,4]f32,
 }
 
+InstanceData :: struct {
+    model : matrix[4,4]f32,
+    // TODO: fix mem copy code to consider memory alignment
+    // NOTE: actual size should be 18 -> rest is padding 
+    faces : [23]uint,
+}
+
 RubiksCube :: struct {
-    cubes: []matrix[4,4]f32,
+    cubes: []InstanceData,
 }
 
 Vertex :: struct {
@@ -37,6 +44,7 @@ Vertex :: struct {
 }
 
 rubiks_cube_init :: proc(rubik: ^RubiksCube) {
+
     for dim in 0..< SIZE {
         // TODO: fix calculation to center any cube
 
@@ -49,7 +57,8 @@ rubiks_cube_init :: proc(rubik: ^RubiksCube) {
 
         for row in 0..< SIZE {
             for col in 0..< SIZE {
-                rubik.cubes[dim * SIZE * SIZE + row * SIZE + col] = mat
+                rubik.cubes[dim * SIZE * SIZE + row * SIZE + col].faces = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
+                rubik.cubes[dim * SIZE * SIZE + row * SIZE + col].model = mat
                 mat[0, 3] += UNIT
             }
 
@@ -57,6 +66,33 @@ rubiks_cube_init :: proc(rubik: ^RubiksCube) {
             mat[0, 3] = -UNIT
         }
     }
+}
+
+rubiks_cube_turn_x :: proc(rubik: ^RubiksCube, is_left_turn: bool) {
+
+
+    for dim in 0..< SIZE {
+        face := [SIZE * SIZE]matrix[4,4]f32{}
+        for r in 0..<SIZE {
+            for c in 0..<SIZE {
+                face[r * SIZE + c] = rubik.cubes[dim * SIZE * SIZE + r * SIZE + c].model
+            }
+        }
+
+        for r in 0..<SIZE {
+            for c in 0..<SIZE {
+                if is_left_turn {
+                    rubik.cubes[dim * SIZE * SIZE + c * SIZE + SIZE - r - 1].model = face[r * SIZE + c]
+                } else {
+                    rubik.cubes[dim * SIZE * SIZE + SIZE * SIZE - c * SIZE - SIZE + r].model = face[r * SIZE + c]
+                }
+            }
+        }
+
+
+    }
+
+
 }
 
 cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
@@ -86,23 +122,25 @@ cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
 
 g_rubiks: ^RubiksCube = nil
 
-
 key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action: i32, mods: i32) {
     if key == glfw.KEY_D && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         for &cube in g_rubiks.cubes {
-            cube[0, 3] += 0.1
+            cube.model[0, 3] += 0.1
         }   
-    } else if key == glfw.KEY_A && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+    } 
+    if key == glfw.KEY_A && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         for &cube in g_rubiks.cubes {
-            cube[0, 3] -= 0.1
+            cube.model[0, 3] -= 0.1
         }
-    } else if key == glfw.KEY_W && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+    } 
+    if key == glfw.KEY_W && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         for &cube in g_rubiks.cubes {
-            cube[1, 3] -= 0.1
+            cube.model[1, 3] -= 0.1
         }
-    } else if key == glfw.KEY_S && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+    } 
+    if key == glfw.KEY_S && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         for &cube in g_rubiks.cubes {
-            cube[1, 3] += 0.1
+            cube.model[1, 3] += 0.1
         }
     }
 }
@@ -226,29 +264,8 @@ main :: proc() {
     mem.copy(camera_buf_maps[1], raw_data(&camera), size_of(camera))
 
     rubiks_cube_init(&rubik)
+    rubiks_cube_turn_x(&rubik, true)
     g_rubiks = &rubik
-
-
-    for i in 0..< SIZE {
-        for j in 0..< SIZE {
-            model := rubik.cubes[i * SIZE + j]
-
-            r := math.sqrt(math.pow(model[0, 3], 2) + math.pow(model[1, 3], 2))
-            if r == 0 { continue }
-
-            angle := math.PI / 4 - math.acos(model[0, 3] / r)
-
-            x := math.cos(angle)
-            y := math.sin(angle)
-
-            log.info(x, y)
-            log.info(rubik.cubes[i * SIZE + j][0, 3], rubik.cubes[i * SIZE + j][1, 3])
-
-            rubik.cubes[i * SIZE + j][0, 3] = x
-            rubik.cubes[i * SIZE + j][1, 3] = y
-        }
-    }
-
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
@@ -323,7 +340,22 @@ main :: proc() {
         check(vk.QueueWaitIdle(queue))
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
 
-        if frame == 0 {
+        if frame == 0 && angle < 90 {
+            /*
+            angle += 1
+
+            models : [CUBES]matrix[4,4]f32 = {}
+            for i in 0..< len(rubik.cubes) {
+                models[i] = rubik.cubes[i]
+            }
+
+            for i in 0..< SIZE {
+                for j in 0..< SIZE {
+                    models[i * SIZE + j] = cube_rotate(0, 0, math.to_radians_f32(angle)) * models[i * SIZE + j]
+                }
+            }
+            */
+
             /*
             angle += 0.00001
 
@@ -335,11 +367,13 @@ main :: proc() {
             }
 
             mem.copy(cube_buf_maps[1], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
+            mem.copy(cube_buf_maps[0], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
+            mem.copy(cube_buf_maps[1], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
             */
         }
 
-        mem.copy(cube_buf_maps[0], raw_data(rubik.cubes), CUBES * size_of(rubik.cubes[0]))
-        mem.copy(cube_buf_maps[1], raw_data(rubik.cubes), CUBES * size_of(rubik.cubes[0]))
+        mem.copy(cube_buf_maps[0], raw_data(rubik.cubes), CUBES * size_of(InstanceData))
+        mem.copy(cube_buf_maps[1], raw_data(rubik.cubes), CUBES * size_of(InstanceData))
     }
 
     vk.DeviceWaitIdle(device)
