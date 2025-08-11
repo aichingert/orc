@@ -497,12 +497,10 @@ ren_create_uniform_buffers :: proc(
     min_ubo_align := props.limits.minUniformBufferOffsetAlignment
     dynamic_align := vk.DeviceSize(size_of(InstanceData))
 
-    log.info(min_ubo_align, dynamic_align)
     if min_ubo_align > 0 {
         dynamic_align = (dynamic_align + min_ubo_align - 1) & ~(min_ubo_align - 1)
     }
     cube_range^ = vk.DeviceSize(dynamic_align)
-    log.info(int(cube_range^))
 
     buffer_size := vk.DeviceSize(CUBES * dynamic_align)
     models, err := mem.make_aligned([]InstanceData, CUBES, int(dynamic_align))
