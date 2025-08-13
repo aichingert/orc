@@ -42,11 +42,18 @@ Vertex :: struct {
 }
 
 g_rubiks: ^RubiksCube = nil
+g_camera: Camera
 g_animate_x_turn: bool = false
 g_animate_y_turn: bool = false
 g_animation_angle: f32 = 0
 g_animation_angle_inc: f32 = 0
+
 g_cube_buf_maps: [MAX_FRAMES_BETWEEN]rawptr
+g_camera_buf_maps: [MAX_FRAMES_BETWEEN]rawptr
+
+g_should_combine: bool = false
+g_previous_x_point: f64 = 0
+g_previous_y_point: f64 = 0
 
 rubiks_cube_init :: proc() {
     for dim in 0..< SIZE {
@@ -131,8 +138,6 @@ cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
 }
 
 key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action: i32, mods: i32) {
-    context = runtime.default_context()
-
     if key == glfw.KEY_D && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_animate_x_turn = true
         g_animation_angle = 90
@@ -155,6 +160,46 @@ key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action
     }
 }
 
+scroll_callback :: proc "c" (win: glfw.WindowHandle, xoffset: f64, yoffset: f64) {
+    context = g_ctx
+
+    g_camera.view[2, 3] += f32(yoffset / 10.0)
+
+    mem.copy(g_camera_buf_maps[0], &g_camera, size_of(g_camera))
+    mem.copy(g_camera_buf_maps[1], &g_camera, size_of(g_camera))
+}
+
+mouse_position :: proc "c" (win: glfw.WindowHandle, xpos: f64, ypos: f64) {
+    context = g_ctx
+
+    state := glfw.GetMouseButton(win, glfw.MOUSE_BUTTON_LEFT);
+
+    if g_should_combine && state == 1 {
+        x := f32(xpos - g_previous_x_point)
+        y := f32(ypos - g_previous_y_point)
+
+        for dim in 0..< SIZE {
+            for i in 0..< SIZE {
+                for j in 0..< SIZE {
+                    m := dim * SIZE * SIZE + i * SIZE + j
+
+                    x_angle := math.to_radians_f32(x)
+                    y_angle := math.to_radians_f32(y)
+
+                    g_rubiks.cubes[m].model = cube_rotate(x_angle, y_angle, 0) * g_rubiks.cubes[m].model
+                }
+            }
+        }
+
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+    }
+
+    g_should_combine = state == 1
+    g_previous_x_point = xpos
+    g_previous_y_point = ypos
+}
+
 main :: proc() {
     context.logger = log.create_console_logger()
     g_ctx = context
@@ -169,6 +214,8 @@ main :: proc() {
     defer glfw.DestroyWindow(win)
 
     glfw.SetKeyCallback(win, key_pressed)
+    glfw.SetScrollCallback(win, scroll_callback)
+    glfw.SetCursorPosCallback(win, mouse_position)
 
     instance: vk.Instance
     dbg_messenger: vk.DebugUtilsMessengerEXT
@@ -245,6 +292,7 @@ main :: proc() {
         &rubik,
         &cube_range)
     g_cube_buf_maps = cube_buf_maps
+    g_camera_buf_maps = camera_buf_maps
     ren_create_descriptor_pool(device, &descriptor_pool)
     sets := ren_create_descriptor_sets(device, cube_range, cube_bufs, camera_bufs, descriptor_pool, descriptor_set_layout)
     ren_create_sync_structures(device, &image_avail, &render_done, &fences)
@@ -258,24 +306,21 @@ main :: proc() {
     near         := f32(.1)
     far          := f32(10)
 
-    camera := Camera{
-        view = {
-            1, 0, 0, 0, 
-            0, 1, 0, 0,
-            0, 0, 1, WINDOW_OFFSET,
-            0, 0, 0, 1,
-        },
-        proj = {},
+    g_camera.view = {
+        1, 0, 0, 0, 
+        0, 1, 0, 0,
+        0, 0, 1, WINDOW_OFFSET,
+        0, 0, 0, 1,
     }
 
-    camera.proj[0][0] = 1 / (aspect_ratio * tan_half)
-    camera.proj[1][1] = 1 / (tan_half)
-    camera.proj[2][2] = far / (far - near)
-    camera.proj[2][3] = 1
-    camera.proj[3][2] = -(far * near) / (far - near)
+    g_camera.proj[0][0] = 1 / (aspect_ratio * tan_half)
+    g_camera.proj[1][1] = 1 / (tan_half)
+    g_camera.proj[2][2] = far / (far - near)
+    g_camera.proj[2][3] = 1
+    g_camera.proj[3][2] = -(far * near) / (far - near)
 
-    mem.copy(camera_buf_maps[0], &camera, size_of(camera))
-    mem.copy(camera_buf_maps[1], &camera, size_of(camera))
+    mem.copy(camera_buf_maps[0], &g_camera, size_of(g_camera))
+    mem.copy(camera_buf_maps[1], &g_camera, size_of(g_camera))
 
     g_rubiks = &rubik
     rubiks_cube_init()
