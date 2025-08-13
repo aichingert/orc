@@ -1,4 +1,3 @@
-
 SRC_DIR=src
 SHADER_DIR=shaders
 SHADER_CC=glslc
