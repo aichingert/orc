@@ -933,6 +933,36 @@ ren_end_single_time_commands :: proc(
     vk.FreeCommandBuffers(device, pool, 1, &buffer)
 }
 
+ren_begin_frame :: proc(
+    device: vk.Device,
+    swapchain: vk.SwapchainKHR,
+    fences: ^[MAX_FRAMES_BETWEEN]vk.Fence,
+    image_available: ^[MAX_FRAMES_BETWEEN]vk.Semaphore,
+    command_buffers: ^[MAX_FRAMES_BETWEEN]vk.CommandBuffer,
+
+    frame: u32,
+) -> (
+    image_index: u32, 
+    successful: bool = true,
+) {
+    check(vk.WaitForFences(device, 1, &fences[frame], true, max(u64)))
+    check(vk.ResetFences(device, 1, &fences[frame]))
+
+    acquire_result := vk.AcquireNextImageKHR(device, swapchain, max(u64), image_available[frame], 0, &image_index)
+
+    #partial switch acquire_result {
+    case .ERROR_OUT_OF_DATE_KHR:
+        successful = false
+    case .SUCCESS, .SUBOPTIMAL_KHR:
+    case:
+        log.panicf("vulkan: acquire next image failure: %v", acquire_result)
+    }
+
+    check(vk.ResetCommandBuffer(command_buffers[frame], {}))
+
+    return
+}
+
 ren_record_command_buffer :: proc(
     buffer: vk.CommandBuffer, 
     index: u32,
@@ -1054,3 +1084,46 @@ ren_record_command_buffer :: proc(
     check(vk.EndCommandBuffer(buffer))
 }
 
+ren_end_frame :: proc(
+    device: vk.Device,
+    swapchain: ^vk.SwapchainKHR,
+    frame: u32,
+    image_index: ^u32,
+    fences: ^[MAX_FRAMES_BETWEEN]vk.Fence,
+    image_available: ^[MAX_FRAMES_BETWEEN]vk.Semaphore,
+    render_finished: ^[MAX_FRAMES_BETWEEN]vk.Semaphore,
+    command_buffers: ^[MAX_FRAMES_BETWEEN]vk.CommandBuffer,
+    queue: vk.Queue,
+) -> bool {
+    submit_info := vk.SubmitInfo { sType = .SUBMIT_INFO,
+        waitSemaphoreCount = 1,
+        pWaitSemaphores    = &image_available[frame],
+        pWaitDstStageMask  = &vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT},
+        commandBufferCount = 1,
+        pCommandBuffers    = &command_buffers[frame],
+        signalSemaphoreCount = 1,
+        pSignalSemaphores  = &render_finished[frame]
+    }
+
+    check(vk.QueueSubmit(queue, 1, &submit_info, fences[frame]))
+
+    present_info := vk.PresentInfoKHR { sType = .PRESENT_INFO_KHR,
+        waitSemaphoreCount = 1,
+        pWaitSemaphores = &render_finished[frame],
+        swapchainCount = 1,
+        pSwapchains = swapchain,
+        pImageIndices = image_index,
+    }
+
+    present_result := vk.QueuePresentKHR(queue, &present_info)
+    switch {
+    case present_result == .ERROR_OUT_OF_DATE_KHR || present_result == .SUBOPTIMAL_KHR: 
+        return false
+    case present_result == .SUCCESS:
+    case:
+        log.panicf("vulkan: present failure: %v", present_result)
+    }
+
+    check(vk.QueueWaitIdle(queue))
+    return true
+}

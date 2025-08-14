@@ -18,7 +18,40 @@ SIZE                :: 3
 CUBES               :: SIZE * SIZE * SIZE
 WINDOW_OFFSET       :: 5
 
+ROTATION_SPEED      :: 0.1
+
 MAX_FRAMES_BETWEEN  :: 2
+
+CUBE                :: []Vertex{
+    {{-.5, -.5, -.5}, {.9, .9, .9}},
+    {{-.5, .5, .5}, {.9, .9, .9}},
+    {{-.5, -.5, .5}, {.9, .9, .9}},
+    {{-.5, .5, -.5}, {.9, .9, .9}},
+    {{.5, -.5, -.5}, {.8, .8, .1}},
+    {{.5, .5, .5}, {.8, .8, .1}},
+    {{.5, -.5, .5}, {.8, .8, .1}},
+    {{.5, .5, -.5}, {.8, .8, .1}},
+    {{-.5, -.5, -.5}, {.9, .6, .1}},
+    {{.5, -.5, .5}, {.9, .6, .1}},
+    {{-.5, -.5, .5}, {.9, .6, .1}},
+    {{.5, -.5, -.5}, {.9, .6, .1}},
+    {{-.5, .5, -.5}, {.8, .1, .1}},
+    {{.5, .5, .5}, {.8, .1, .1}},
+    {{-.5, .5, .5}, {.8, .1, .1}},
+    {{.5, .5, -.5}, {.8, .1, .1}},
+    {{-.5, -.5, 0.5}, {.1, .1, .8}},
+    {{.5, .5, 0.5}, {.1, .1, .8}},
+    {{-.5, .5, 0.5}, {.1, .1, .8}},
+    {{.5, -.5, 0.5}, {.1, .1, .8}},
+    {{-.5, -.5, -0.5}, {.1, .8, .1}},
+    {{.5, .5, -0.5}, {.1, .8, .1}},
+    {{-.5, .5, -0.5}, {.1, .8, .1}},
+    {{.5, -.5, -0.5}, {.1, .8, .1}},
+}
+INDICES             :: []u16{
+    0, 1, 2, 0, 3, 1, 4, 5, 6, 4, 7, 5, 8, 9, 10, 8, 11, 9, 12, 13, 
+    14, 12, 15, 13, 16, 17, 18, 16, 19, 17, 20, 21, 22, 20, 23, 21,
+}
 
 UNIFORM_BUFFER_BINDING          :: 0
 UNIFORM_BUFFER_DYNAMIC_BINDING  :: 1
@@ -41,130 +74,53 @@ Vertex :: struct {
     col: [3]f32,
 }
 
+AnimationData :: struct {
+    angles: [3]f32,
+    change: [3]f32,
+    turn_proc: proc([]int, bool),
+}
+
 g_rubiks: ^RubiksCube = nil
 g_camera: Camera
-g_animate_x_turn: bool = false
-g_animate_y_turn: bool = false
-g_animation_angle: f32 = 0
-g_animation_angle_inc: f32 = 0
+g_animation: AnimationData
+g_animate_turn: bool
 
 g_cube_buf_maps: [MAX_FRAMES_BETWEEN]rawptr
 g_camera_buf_maps: [MAX_FRAMES_BETWEEN]rawptr
 
-g_should_combine: bool = false
 g_previous_x_point: f64 = 0
 g_previous_y_point: f64 = 0
-
-rubiks_cube_init :: proc() {
-    for dim in 0..< SIZE {
-        // TODO: fix calculation to center any cube
-
-        mat := matrix[4,4]f32{
-            1, 0, 0, -UNIT,
-            0, 1, 0, -UNIT,
-            0, 0, 1, -UNIT + UNIT * f32(dim),
-            0, 0, 0, 1,
-        }
-
-        for row in 0..< SIZE {
-            for col in 0..< SIZE {
-                g_rubiks.cubes[dim * SIZE * SIZE + row * SIZE + col].model = mat
-                mat[0, 3] += UNIT
-            }
-
-            mat[1, 3] += UNIT
-            mat[0, 3] = -UNIT
-        }
-    }
-
-    mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
-    mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
-}
-
-rubiks_cube_turn_x :: proc(sides_to_turn: []int, is_left_turn: bool) {
-    angle: f32 = 90.0
-
-    if is_left_turn {
-        angle = -90.0
-    } 
-
-    for dim in sides_to_turn {
-        face := [SIZE * SIZE]matrix[4,4]f32{}
-        for r in 0..<SIZE {
-            for c in 0..<SIZE {
-                g_rubiks.cubes[dim * SIZE * SIZE + r * SIZE + c].model = cube_rotate(0, 0, math.to_radians_f32(angle)) * g_rubiks.cubes[dim * SIZE * SIZE + r * SIZE + c].model
-                face[r * SIZE + c] = g_rubiks.cubes[dim * SIZE * SIZE + r * SIZE + c].model
-            }
-        }
-
-        for r in 0..<SIZE {
-            for c in 0..<SIZE {
-                if is_left_turn {
-                    g_rubiks.cubes[dim * SIZE * SIZE + c * SIZE + SIZE - r - 1].model = face[r * SIZE + c]
-                } else {
-                    g_rubiks.cubes[dim * SIZE * SIZE + SIZE * SIZE - c * SIZE - SIZE + r].model = face[r * SIZE + c]
-                }
-            }
-        }
-    }
-
-    mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
-    mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
-}
-
-cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
-    B := matrix[4,4]f32{
-        math.cos_f32(z), math.sin_f32(z), 0, 0,
-        -math.sin_f32(z), math.cos_f32(z), 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1,
-    }
-
-    P := matrix[4,4]f32{
-        1, 0, 0, 0,
-        0, math.cos_f32(x), math.sin_f32(x), 0,
-        0, -math.sin_f32(x), math.cos_f32(x), 0,
-        0, 0, 0, 1,
-    }
-
-    H := matrix[4,4]f32{
-        math.cos_f32(y), 0, -math.sin_f32(y), 0,
-        0, 1, 0, 0,
-        math.sin_f32(y), 0, math.cos_f32(y), 0,
-        0, 0, 0, 1,
-    }
-
-    return B * P * H
-}
+g_has_previous_point: bool = false
 
 key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action: i32, mods: i32) {
+    if g_animate_turn {
+        return
+    }
+
     if key == glfw.KEY_D && action & (glfw.REPEAT | glfw.PRESS) != 0 {
-        g_animate_x_turn = true
-        g_animation_angle = 90
-        g_animation_angle_inc = 0.01
+        g_animate_turn = true
+        g_animation.angles = {0, 0, 90}
+        g_animation.change = {0, 0, 01}
     } 
     if key == glfw.KEY_A && action & (glfw.REPEAT | glfw.PRESS) != 0 {
-        g_animate_x_turn = true
-        g_animation_angle = -90
-        g_animation_angle_inc = -0.01
+        g_animate_turn = true
+        g_animation.angles = {0, 0, -90}
+        g_animation.change = {0, 0, -01}
     } 
     if key == glfw.KEY_W && action & (glfw.REPEAT | glfw.PRESS) != 0 {
-        g_animate_y_turn = true
-        g_animation_angle = 90
-        g_animation_angle_inc = -0.01
+        g_animate_turn = true
+        g_animation.angles = {0, -90, 0}
+        g_animation.change = {0, -01, 0}
     } 
     if key == glfw.KEY_S && action & (glfw.REPEAT | glfw.PRESS) != 0 {
-        for &cube in g_rubiks.cubes {
-            cube.model[1, 3] += 0.1
-        }
+        g_animate_turn = true
+        g_animation.angles = {0, 90, 0}
+        g_animation.change = {0, 01, 0}
     }
 }
 
 scroll_callback :: proc "c" (win: glfw.WindowHandle, xoffset: f64, yoffset: f64) {
-    context = g_ctx
-
-    g_camera.view[2, 3] += f32(yoffset / 10.0)
-
+    g_camera.view[2, 3] -= f32(yoffset / 10.0)
     mem.copy(g_camera_buf_maps[0], &g_camera, size_of(g_camera))
     mem.copy(g_camera_buf_maps[1], &g_camera, size_of(g_camera))
 }
@@ -174,30 +130,21 @@ mouse_position :: proc "c" (win: glfw.WindowHandle, xpos: f64, ypos: f64) {
 
     state := glfw.GetMouseButton(win, glfw.MOUSE_BUTTON_LEFT);
 
-    if g_should_combine && state == 1 {
-        x := f32(xpos - g_previous_x_point)
-        y := f32(ypos - g_previous_y_point)
+    if g_has_previous_point && state == 1 {
+        x_angle := math.to_radians_f32(f32(xpos - g_previous_x_point))
+        y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos))
 
-        for dim in 0..< SIZE {
-            for i in 0..< SIZE {
-                for j in 0..< SIZE {
-                    m := dim * SIZE * SIZE + i * SIZE + j
-
-                    x_angle := math.to_radians_f32(x)
-                    y_angle := math.to_radians_f32(y)
-
-                    g_rubiks.cubes[m].model = cube_rotate(x_angle, y_angle, 0) * g_rubiks.cubes[m].model
-                }
-            }
+        for i in 0..< SIZE * SIZE * SIZE {
+            g_rubiks.cubes[i].model = cube_rotate(x_angle, y_angle, 0) * g_rubiks.cubes[i].model
         }
 
         mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
         mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
 
-    g_should_combine = state == 1
     g_previous_x_point = xpos
     g_previous_y_point = ypos
+    g_has_previous_point = state == 1
 }
 
 main :: proc() {
@@ -245,34 +192,6 @@ main :: proc() {
     render_done: [MAX_FRAMES_BETWEEN]vk.Semaphore
     fences:      [MAX_FRAMES_BETWEEN]vk.Fence
 
-    vertices := []Vertex{
-        {{-.5, -.5, -.5}, {.9, .9, .9}},
-        {{-.5, .5, .5}, {.9, .9, .9}},
-        {{-.5, -.5, .5}, {.9, .9, .9}},
-        {{-.5, .5, -.5}, {.9, .9, .9}},
-        {{.5, -.5, -.5}, {.8, .8, .1}},
-        {{.5, .5, .5}, {.8, .8, .1}},
-        {{.5, -.5, .5}, {.8, .8, .1}},
-        {{.5, .5, -.5}, {.8, .8, .1}},
-        {{-.5, -.5, -.5}, {.9, .6, .1}},
-        {{.5, -.5, .5}, {.9, .6, .1}},
-        {{-.5, -.5, .5}, {.9, .6, .1}},
-        {{.5, -.5, -.5}, {.9, .6, .1}},
-        {{-.5, .5, -.5}, {.8, .1, .1}},
-        {{.5, .5, .5}, {.8, .1, .1}},
-        {{-.5, .5, .5}, {.8, .1, .1}},
-        {{.5, .5, -.5}, {.8, .1, .1}},
-        {{-.5, -.5, 0.5}, {.1, .1, .8}},
-        {{.5, .5, 0.5}, {.1, .1, .8}},
-        {{-.5, .5, 0.5}, {.1, .1, .8}},
-        {{.5, -.5, 0.5}, {.1, .1, .8}},
-        {{-.5, -.5, -0.5}, {.1, .8, .1}},
-        {{.5, .5, -0.5}, {.1, .8, .1}},
-        {{-.5, .5, -0.5}, {.1, .8, .1}},
-        {{.5, -.5, -0.5}, {.1, .8, .1}},
-    }
-    indices := []u16{0, 1, 2, 0, 3, 1, 4, 5, 6, 4, 7, 5, 8, 9, 10, 8, 11, 9, 12, 13, 14, 12, 15, 13, 16, 17, 18, 16, 19, 17, 20, 21, 22, 20, 23, 21}
-
     rubik: RubiksCube 
     cube_range: vk.DeviceSize
 
@@ -284,8 +203,8 @@ main :: proc() {
     ren_create_graphics_pipeline(device, physical, format, extent, &descriptor_set_layout, &pipeline, &pipeline_layout)
     ren_create_command_structures(device, family_index, &command_pool, &command_buffers[0])
     ren_create_depth_resources(device, physical, extent, &depth_image, &depth_image_view, &depth_image_mem)
-    ren_create_vertex_buffer(device, physical, command_pool, queue, vertices, &vertex_buffer, &vertex_buffer_mem)
-    ren_create_index_buffer(device, physical, command_pool, queue, indices, &index_buffer, &index_buffer_mem)
+    ren_create_vertex_buffer(device, physical, command_pool, queue, CUBE, &vertex_buffer, &vertex_buffer_mem)
+    ren_create_index_buffer(device, physical, command_pool, queue, INDICES, &index_buffer, &index_buffer_mem)
     camera_bufs, camera_buf_mems, camera_buf_maps, cube_bufs, cube_buf_mems, cube_buf_maps := ren_create_uniform_buffers(
         device,
         physical,
@@ -298,7 +217,7 @@ main :: proc() {
     ren_create_sync_structures(device, &image_avail, &render_done, &fences)
 
     frame := u32(0)
-    angle := f32(0)
+    angles: [3]f32 = {0, 0, 0}
 
     aspect_ratio := f32(extent.width) / f32(extent.height)
     fovy         := math.to_radians_f32(120)
@@ -328,81 +247,17 @@ main :: proc() {
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
 
-        if g_animate_x_turn {
-            angle += g_animation_angle_inc
-            sides := []int{0, 1, 2}
-
-            models : [CUBES]matrix[4,4]f32 = {}
-            for i in 0..< len(rubik.cubes) {
-                models[i] = rubik.cubes[i].model
-            }
-
-            for dim in sides {
-                for i in 0..< SIZE {
-                    for j in 0..< SIZE {
-                        models[dim * SIZE * SIZE + i * SIZE + j] = cube_rotate(0, 0, math.to_radians_f32(angle)) * models[dim * SIZE * SIZE + i * SIZE + j]
-                    }
-                }
-            }
-
-            mem.copy(cube_buf_maps[0], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
-            mem.copy(cube_buf_maps[1], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
-
-            if math.abs(angle) > math.abs(g_animation_angle) {
-                angle = 0
-                rubiks_cube_turn_x([]int{0, 1, 2}, g_animation_angle < 0.0)
-                g_animate_x_turn = false
-            }
+        if g_animate_turn {
+            animate_cube_turn(&angles)
         }
 
-        if g_animate_y_turn {
-            angle += g_animation_angle_inc
-            sides := []int{0, 1, 2}
-
-            models : [CUBES]matrix[4,4]f32 = {}
-            for i in 0..< len(rubik.cubes) {
-                models[i] = rubik.cubes[i].model
-            }
-
-            for dim in sides {
-                for i in 0..< SIZE {
-                    for j in 0..< SIZE {
-                        i := dim * SIZE * SIZE + i * SIZE + j
-
-                        models[i] = cube_rotate(0, math.to_radians_f32(angle), 0) * models[i]
-                    }
-                }
-            }
-
-            mem.copy(cube_buf_maps[0], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
-            mem.copy(cube_buf_maps[1], raw_data(&models), CUBES * size_of(rubik.cubes[0]))
-
-            if math.abs(angle) > math.abs(g_animation_angle) {
-                angle = 0
-                // TODO:
-                //rubiks_cube_turn_x([]int{0, 1, 2}, g_animation_angle < 0.0)
-                g_animate_y_turn = false
-            }
-        }
-
-        check(vk.WaitForFences(device, 1, &fences[frame], true, max(u64)))
-        check(vk.ResetFences(device, 1, &fences[frame]))
-
-        image_index: u32 = 0
-        acquire_result := vk.AcquireNextImageKHR(device, swapchain, max(u64), image_avail[frame], 0, &image_index)
-
-        #partial switch acquire_result {
-        case .ERROR_OUT_OF_DATE_KHR:
+        image_index, successful := ren_begin_frame(device, swapchain, &fences, &image_avail, &command_buffers, frame)
+        if !successful {
             format, extent, images, image_views = ren_recreate_swapchain(
                 win, device, physical, surface, &swapchain, &images, &image_views
             )
             continue
-        case .SUCCESS, .SUBOPTIMAL_KHR:
-        case:
-            log.panicf("vulkan: acquire next image failure: %v", acquire_result)
         }
-
-        check(vk.ResetCommandBuffer(command_buffers[frame], {}))
 
         ren_record_command_buffer(
             command_buffers[frame], 
@@ -415,44 +270,19 @@ main :: proc() {
             depth_image,
             depth_image_view,
             sets,
-            u32(len(indices)),
+            u32(len(INDICES)),
             vertex_buffer, 
             index_buffer,
             pipeline,
             pipeline_layout)
 
-        submit_info := vk.SubmitInfo { sType = .SUBMIT_INFO,
-            waitSemaphoreCount = 1,
-            pWaitSemaphores    = &image_avail[frame],
-            pWaitDstStageMask  = &vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT},
-            commandBufferCount = 1,
-            pCommandBuffers    = &command_buffers[frame],
-            signalSemaphoreCount = 1,
-            pSignalSemaphores  = &render_done[frame]
-        }
-
-        check(vk.QueueSubmit(queue, 1, &submit_info, fences[frame]))
-
-        present_info := vk.PresentInfoKHR { sType = .PRESENT_INFO_KHR,
-            waitSemaphoreCount = 1,
-            pWaitSemaphores = &render_done[frame],
-            swapchainCount = 1,
-            pSwapchains = &swapchain,
-            pImageIndices = &image_index,
-        }
-
-        present_result := vk.QueuePresentKHR(queue, &present_info)
-        switch {
-        case present_result == .ERROR_OUT_OF_DATE_KHR || present_result == .SUBOPTIMAL_KHR:
+        successful = ren_end_frame(device, &swapchain, frame, &image_index, &fences, &image_avail, &render_done, &command_buffers, queue)
+        if !successful {
             format, extent, images, image_views = ren_recreate_swapchain(
                 win, device, physical, surface, &swapchain, &images, &image_views
             )
-        case present_result == .SUCCESS:
-        case:
-            log.panicf("vulkan: present failure: %v", present_result)
         }
 
-        check(vk.QueueWaitIdle(queue))
         frame = (frame + 1) % MAX_FRAMES_BETWEEN
     }
 
@@ -461,7 +291,21 @@ main :: proc() {
     for sem in render_done { vk.DestroySemaphore(device, sem, nil) }
     for fence in fences    { vk.DestroyFence(device, fence, nil  ) }
 
+    for frame in 0..<MAX_FRAMES_BETWEEN {
+        vk.DestroyBuffer(device, camera_bufs[frame], nil)
+        vk.FreeMemory(device, camera_buf_mems[frame], nil)
+
+        vk.DestroyBuffer(device, cube_bufs[frame], nil)
+        vk.FreeMemory(device, cube_buf_mems[frame], nil)
+    }
+
+    vk.DestroyImageView(device, depth_image_view, nil)
+    vk.DestroyImage(device, depth_image, nil)
+    vk.FreeMemory(device, depth_image_mem, nil)
+
     vk.DestroyDescriptorPool(device, descriptor_pool, nil)
+    vk.DestroyDescriptorSetLayout(device, descriptor_set_layout, nil)
+
     vk.DestroyBuffer(device, vertex_buffer, nil)
     vk.FreeMemory(device, vertex_buffer_mem, nil)
     vk.DestroyBuffer(device, index_buffer, nil)
