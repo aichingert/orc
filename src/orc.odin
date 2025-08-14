@@ -18,6 +18,7 @@ SIZE                :: 3
 CUBES               :: SIZE * SIZE * SIZE
 WINDOW_OFFSET       :: 5
 
+HIGHLIGHTING        :: 0.3
 ROTATION_SPEED      :: 0.1
 
 MAX_FRAMES_BETWEEN  :: 2
@@ -57,12 +58,14 @@ UNIFORM_BUFFER_BINDING          :: 0
 UNIFORM_BUFFER_DYNAMIC_BINDING  :: 1
 
 Camera :: struct {
-    view : matrix[4,4]f32,
-    proj : matrix[4,4]f32,
+    view: matrix[4,4]f32,
+    proj: matrix[4,4]f32,
 }
 
 InstanceData :: struct {
-    model : matrix[4,4]f32,
+    model: matrix[4,4]f32,
+    highlight: f32,
+    padding: [32]u8, 
 }
 
 RubiksCube :: struct {
@@ -74,6 +77,12 @@ Vertex :: struct {
     col: [3]f32,
 }
 
+SelectionData :: struct {
+    is_row_selected: bool,
+    row: i16,
+    col: i16,
+}
+
 AnimationData :: struct {
     angles: [3]f32,
     change: [3]f32,
@@ -82,8 +91,10 @@ AnimationData :: struct {
 
 g_rubiks: ^RubiksCube = nil
 g_camera: Camera
+g_selection: SelectionData
 g_animation: AnimationData
 g_animate_turn: bool
+g_has_selection: bool
 
 g_cube_buf_maps: [MAX_FRAMES_BETWEEN]rawptr
 g_camera_buf_maps: [MAX_FRAMES_BETWEEN]rawptr
@@ -93,10 +104,35 @@ g_previous_y_point: f64 = 0
 g_has_previous_point: bool = false
 
 key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action: i32, mods: i32) {
+    context = g_ctx
+
+    if key == glfw.KEY_ESCAPE && action == glfw.PRESS {
+        g_has_selection = false
+    }
+    if key == glfw.KEY_LEFT && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        g_has_selection = true
+        g_selection.is_row_selected = false
+        g_selection.col = (g_selection.col - 1) %% i16(SIZE)
+    }
+    if key == glfw.KEY_RIGHT && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        g_has_selection = true
+        g_selection.is_row_selected = false
+        g_selection.col = (g_selection.col + 1) %% i16(SIZE)
+    }
+    if key == glfw.KEY_UP && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        g_has_selection = true
+        g_selection.is_row_selected = true
+        g_selection.row = (g_selection.row - 1) %% i16(SIZE)
+    }
+    if key == glfw.KEY_DOWN && action & (glfw.REPEAT | glfw.PRESS) != 0 {
+        g_has_selection = true
+        g_selection.is_row_selected = true 
+        g_selection.row = (g_selection.row + 1) %% i16(SIZE)
+    }
+
     if g_animate_turn {
         return
     }
-
     if key == glfw.KEY_D && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_animate_turn = true
         g_animation.angles = {0, 0, 90}
@@ -246,6 +282,24 @@ main :: proc() {
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
+
+        for front_face in 0..< SIZE * SIZE {
+            g_rubiks.cubes[front_face].highlight = 0
+        }
+
+        if g_has_selection {
+            for r in 0..< i16(SIZE) {
+                for c in 0..< i16(SIZE) {
+                    if g_selection.is_row_selected && r == g_selection.row {
+                        g_rubiks.cubes[r * SIZE + c].highlight = HIGHLIGHTING
+                    } else if !g_selection.is_row_selected && c == g_selection.col {
+                        g_rubiks.cubes[r * SIZE + c].highlight = HIGHLIGHTING
+                    }
+                }
+            }
+        }
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
 
         if g_animate_turn {
             animate_cube_turn(&angles)
