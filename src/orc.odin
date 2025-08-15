@@ -19,35 +19,35 @@ CUBES               :: SIZE * SIZE * SIZE
 WINDOW_OFFSET       :: 5
 
 HIGHLIGHTING        :: 0.3
-ROTATION_SPEED      :: 0.1
+ROTATION_SPEED      :: 0.13
 
 MAX_FRAMES_BETWEEN  :: 2
 
 CUBE                :: []Vertex{
-    {{-.5, -.5, -.5}, {.9, .9, .9}},
-    {{-.5, .5, .5}, {.9, .9, .9}},
-    {{-.5, -.5, .5}, {.9, .9, .9}},
-    {{-.5, .5, -.5}, {.9, .9, .9}},
-    {{.5, -.5, -.5}, {.8, .8, .1}},
-    {{.5, .5, .5}, {.8, .8, .1}},
-    {{.5, -.5, .5}, {.8, .8, .1}},
-    {{.5, .5, -.5}, {.8, .8, .1}},
-    {{-.5, -.5, -.5}, {.9, .6, .1}},
-    {{.5, -.5, .5}, {.9, .6, .1}},
-    {{-.5, -.5, .5}, {.9, .6, .1}},
-    {{.5, -.5, -.5}, {.9, .6, .1}},
-    {{-.5, .5, -.5}, {.8, .1, .1}},
-    {{.5, .5, .5}, {.8, .1, .1}},
-    {{-.5, .5, .5}, {.8, .1, .1}},
-    {{.5, .5, -.5}, {.8, .1, .1}},
-    {{-.5, -.5, 0.5}, {.1, .1, .8}},
-    {{.5, .5, 0.5}, {.1, .1, .8}},
-    {{-.5, .5, 0.5}, {.1, .1, .8}},
-    {{.5, -.5, 0.5}, {.1, .1, .8}},
-    {{-.5, -.5, -0.5}, {.1, .8, .1}},
-    {{.5, .5, -0.5}, {.1, .8, .1}},
-    {{-.5, .5, -0.5}, {.1, .8, .1}},
-    {{.5, -.5, -0.5}, {.1, .8, .1}},
+    {{-.5, -.5, -.5},   {196.0 / 255.0, 30 / 255.0, 58. / 255.0}},
+    {{-.5, .5, .5},     {196.0 / 255.0, 30 / 255.0, 58. / 255.0}},
+    {{-.5, -.5, .5},    {196.0 / 255.0, 30 / 255.0, 58. / 255.0}},
+    {{-.5, .5, -.5},    {196.0 / 255.0, 30 / 255.0, 58. / 255.0}},
+    {{.5, -.5, -.5},    {0, 158.0 / 255.0, 96.0 / 255.0}},
+    {{.5, .5, .5},      {0, 158.0 / 255.0, 96.0 / 255.0}},
+    {{.5, -.5, .5},     {0, 158.0 / 255.0, 96.0 / 255.0}},
+    {{.5, .5, -.5},     {0, 158.0 / 255.0, 96.0 / 255.0}},
+    {{-.5, -.5, -.5},   {0, 81.0 / 255.0, 186.0 / 255.0}},
+    {{.5, -.5, .5},     {0, 81.0 / 255.0, 186.0 / 255.0}},
+    {{-.5, -.5, .5},    {0, 81.0 / 255.0, 186.0 / 255.0}},
+    {{.5, -.5, -.5},    {0, 81.0 / 255.0, 186.0 / 255.0}},
+    {{-.5, .5, -.5},    {1, 88.0 / 255.0, 0}},
+    {{.5, .5, .5},      {1, 88.0 / 255.0, 0}},
+    {{-.5, .5, .5},     {1, 88.0 / 255.0, 0}},
+    {{.5, .5, -.5},     {1, 88.0 / 255.0, 0}},
+    {{-.5, -.5, 0.5},   {1, 213.0 / 255.0, 0}},
+    {{.5, .5, 0.5},     {1, 213.0 / 255.0, 0}},
+    {{-.5, .5, 0.5},    {1, 213.0 / 255.0, 0}},
+    {{.5, -.5, 0.5},    {1, 213.0 / 255.0, 0}},
+    {{-.5, -.5, -0.5},  {1, 1, 1}},
+    {{.5, .5, -0.5},    {1, 1, 1}},
+    {{-.5, .5, -0.5},   {1, 1, 1}},
+    {{.5, -.5, -0.5},   {1, 1, 1}},
 }
 INDICES             :: []u16{
     0, 1, 2, 0, 3, 1, 4, 5, 6, 4, 7, 5, 8, 9, 10, 8, 11, 9, 12, 13, 
@@ -135,23 +135,27 @@ key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action
     }
     if key == glfw.KEY_D && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_animate_turn = true
-        g_animation.angles = {0, 0, 90}
-        g_animation.change = {0, 0, 01}
+        g_animation.angles = {0, 0, -90}
+        g_animation.change = {0, 0, -01}
+        g_animation.turn_proc = rubiks_cube_turn_x
     } 
     if key == glfw.KEY_A && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_animate_turn = true
-        g_animation.angles = {0, 0, -90}
-        g_animation.change = {0, 0, -01}
+        g_animation.angles = {0, 0, 90}
+        g_animation.change = {0, 0, 01}
+        g_animation.turn_proc = rubiks_cube_turn_x
     } 
     if key == glfw.KEY_W && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_animate_turn = true
-        g_animation.angles = {0, -90, 0}
-        g_animation.change = {0, -01, 0}
+        g_animation.angles = {0, 90, 0}
+        g_animation.change = {0, 01, 0}
+        g_animation.turn_proc = rubiks_cube_turn_y
     } 
     if key == glfw.KEY_S && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_animate_turn = true
-        g_animation.angles = {0, 90, 0}
-        g_animation.change = {0, 01, 0}
+        g_animation.angles = {0, -90, 0}
+        g_animation.change = {0, -01, 0}
+        g_animation.turn_proc = rubiks_cube_turn_y
     }
 }
 
@@ -283,19 +287,23 @@ main :: proc() {
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
 
-        for front_face in 0..< SIZE * SIZE {
+        for front_face in 0..< SIZE * SIZE * SIZE {
             g_rubiks.cubes[front_face].highlight = 0
         }
 
         if g_has_selection {
+            for d in 0..< i16(SIZE) {
+                side := d * i16(SIZE * SIZE)
+
             for r in 0..< i16(SIZE) {
                 for c in 0..< i16(SIZE) {
                     if g_selection.is_row_selected && r == g_selection.row {
-                        g_rubiks.cubes[r * SIZE + c].highlight = HIGHLIGHTING
+                        g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
                     } else if !g_selection.is_row_selected && c == g_selection.col {
-                        g_rubiks.cubes[r * SIZE + c].highlight = HIGHLIGHTING
+                        g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
                     }
                 }
+            }
             }
         }
         mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
@@ -373,4 +381,5 @@ main :: proc() {
     vk.DestroySurfaceKHR(instance, surface, nil)
     vk.DestroyInstance(instance, nil)
 }
+
 

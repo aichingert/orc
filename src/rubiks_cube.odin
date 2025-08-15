@@ -1,7 +1,8 @@
 package main
 
-import "core:math"
 import "core:mem"
+import "core:log"
+import "core:math"
 
 rubiks_cube_init :: proc() {
     for dim in 0..< SIZE {
@@ -29,33 +30,6 @@ rubiks_cube_init :: proc() {
     mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
 }
 
-rubiks_cube_turn_x :: proc(sides_to_turn: []int, is_left_turn: bool) {
-    angle: f32 = 90.0
-
-    if is_left_turn {
-        angle = -90.0
-    } 
-
-    for dim in sides_to_turn {
-        side := dim * SIZE * SIZE
-        face := [SIZE * SIZE]matrix[4,4]f32{}
-
-        for cube in 0..< SIZE * SIZE {
-            face[cube] = g_rubiks.cubes[side + cube].model
-        }
-
-        for r in 0..<SIZE {
-            for c in 0..<SIZE {
-                if is_left_turn {
-                    g_rubiks.cubes[dim * SIZE * SIZE + c * SIZE + SIZE - r - 1].model = face[r * SIZE + c]
-                } else {
-                    g_rubiks.cubes[dim * SIZE * SIZE + SIZE * SIZE - c * SIZE - SIZE + r].model = face[r * SIZE + c]
-                }
-            }
-        }
-    }
-}
-
 cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
     B := matrix[4,4]f32{
         math.cos_f32(z), math.sin_f32(z), 0, 0,
@@ -81,35 +55,95 @@ cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
     return B * P * H
 }
 
+rubiks_cube_turn_x :: proc(sides_to_turn: []int, is_turn_left: bool) {
+    angle: f32 = 90.0
+
+    if is_turn_left {
+        angle = -90.0
+    } 
+
+    for dim in sides_to_turn {
+        side := dim * SIZE * SIZE
+        face: [SIZE * SIZE]matrix[4,4]f32
+
+        for cube in 0..< SIZE * SIZE {
+            face[cube] = cube_rotate(0, 0, math.to_radians_f32(angle)) * g_rubiks.cubes[side + cube].model 
+        }
+
+        for r in 0..<SIZE {
+            for c in 0..<SIZE {
+                if is_turn_left {
+                    g_rubiks.cubes[side + c * SIZE + SIZE - r - 1].model = face[r * SIZE + c]
+                } else {
+                    g_rubiks.cubes[side + SIZE * SIZE - c * SIZE - SIZE + r].model = face[r * SIZE + c]
+                }
+            }
+        }
+    }
+}
+
+rubiks_cube_turn_y :: proc(sides_to_turn: []int, is_turn_down: bool) {
+    angle: f32 = 90
+
+    if is_turn_down {
+        angle = -90
+    }
+
+    // 0, 1, 2
+
+    // 
+    for side in sides_to_turn {
+        face: [SIZE * SIZE]matrix[4, 4]f32
+
+        for d in 0..< SIZE {
+            for r in 0..< SIZE {
+                i := d * SIZE * SIZE + r * SIZE + side
+                log.info(d * SIZE + r, i)
+                face[d * SIZE + r] = cube_rotate(0, math.to_radians(angle), 0) * g_rubiks.cubes[i].model
+            }
+        }
+
+        for i in 0..< SIZE {
+        }
+
+        
+
+        // 0, 0, 0, -> 0, 0, 2,
+        // 0, 1, 0, -> 0, 1, 1,
+        // 0, 2, 0 ->  0, 2, 0
+
+
+    }
+
+}
+
 animate_cube_turn :: proc(angles: ^[3]f32) {
     sides: [SIZE]int
     for i in 0..< SIZE { sides[i] = i }
     for i in 0..< len(angles) { angles[i] += g_animation.change[i] * ROTATION_SPEED }
 
+    models: [CUBES]InstanceData
+
     for dim in sides {
         side := dim * SIZE * SIZE
 
         for cube in 0..< SIZE * SIZE {
-            y, x, z := g_animation.change[0], g_animation.change[1], g_animation.change[2]
-            ys, xs, zs := y * ROTATION_SPEED, x * ROTATION_SPEED, z * ROTATION_SPEED
-            yr, xr, zr := math.to_radians_f32(ys), math.to_radians_f32(xs), math.to_radians_f32(zs)
+            y, x, z := angles[0], angles[1], angles[2]
+            yr, xr, zr := math.to_radians_f32(y), math.to_radians_f32(x), math.to_radians_f32(z)
 
-            g_rubiks.cubes[side + cube].model = cube_rotate(yr, xr, zr) * g_rubiks.cubes[side + cube].model
+            models[side + cube].highlight = g_rubiks.cubes[side + cube].highlight
+            models[side + cube].model = cube_rotate(yr, xr, zr) * g_rubiks.cubes[side + cube].model
         }
     }
 
-    mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
-    mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+    mem.copy(g_cube_buf_maps[0], raw_data(&models), CUBES * size_of(g_rubiks.cubes[0]))
+    mem.copy(g_cube_buf_maps[1], raw_data(&models), CUBES * size_of(g_rubiks.cubes[0]))
 
-    if math.abs(angles[2]) > math.abs(g_animation.angles[2]) {
-        g_animate_turn = false
-        angles[2] = 0
-        rubiks_cube_turn_x(sides[:], g_animation.angles[2] < 0.0)
+    for i in 0..< len(angles) {
+        if math.abs(angles[i]) > math.abs(g_animation.angles[i]) {
+            g_animate_turn = false
+            angles[i] = 0
+            g_animation.turn_proc(sides[:], g_animation.angles[i] < 0.0)
+        }
     }
-    if math.abs(angles[1]) > math.abs(g_animation.angles[1]) {
-        g_animate_turn = false
-        angles[1] = 0
-        //TODO: rubiks_cube_turn_y(sides, g_animation.angles[1] < 0.0)
-    }
-
 }
