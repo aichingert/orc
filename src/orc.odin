@@ -86,7 +86,7 @@ SelectionData :: struct {
 AnimationData :: struct {
     angles: [3]f32,
     change: [3]f32,
-    turn_proc: proc([]int, bool),
+    turn_proc: proc(bool),
 }
 
 g_rubiks: ^RubiksCube = nil
@@ -287,27 +287,25 @@ main :: proc() {
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
 
-        for front_face in 0..< SIZE * SIZE * SIZE {
-            g_rubiks.cubes[front_face].highlight = 0
-        }
-
+        /*
         if g_has_selection {
             for d in 0..< i16(SIZE) {
                 side := d * i16(SIZE * SIZE)
 
-            for r in 0..< i16(SIZE) {
-                for c in 0..< i16(SIZE) {
-                    if g_selection.is_row_selected && r == g_selection.row {
-                        g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
-                    } else if !g_selection.is_row_selected && c == g_selection.col {
-                        g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
+                for r in 0..< i16(SIZE) {
+                    for c in 0..< i16(SIZE) {
+                        if g_selection.is_row_selected && r == g_selection.row {
+                            g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
+                        } else if !g_selection.is_row_selected && c == g_selection.col {
+                            g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
+                        }
                     }
                 }
-            }
             }
         }
         mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
         mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
+        */
 
         if g_animate_turn {
             animate_cube_turn(&angles)

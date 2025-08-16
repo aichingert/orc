@@ -55,14 +55,14 @@ cube_rotate :: proc(y: f32, x: f32, z: f32) -> matrix[4,4]f32 {
     return B * P * H
 }
 
-rubiks_cube_turn_x :: proc(sides_to_turn: []int, is_turn_left: bool) {
+rubiks_cube_turn_x :: proc(is_turn_left: bool) {
     angle: f32 = 90.0
 
     if is_turn_left {
         angle = -90.0
     } 
 
-    for dim in sides_to_turn {
+    for dim in 0..< SIZE {
         side := dim * SIZE * SIZE
         face: [SIZE * SIZE]matrix[4,4]f32
 
@@ -82,49 +82,48 @@ rubiks_cube_turn_x :: proc(sides_to_turn: []int, is_turn_left: bool) {
     }
 }
 
-rubiks_cube_turn_y :: proc(sides_to_turn: []int, is_turn_down: bool) {
+rubiks_cube_turn_y :: proc(is_turn_down: bool) {
     angle: f32 = 90
 
     if is_turn_down {
-        angle = -90
+        angle = -angle
     }
 
-    // 0, 1, 2
-
-    // 
-    for side in sides_to_turn {
+    for c in 0..< SIZE {
         face: [SIZE * SIZE]matrix[4, 4]f32
 
         for d in 0..< SIZE {
             for r in 0..< SIZE {
-                i := d * SIZE * SIZE + r * SIZE + side
-                log.info(d * SIZE + r, i)
+                i := d * SIZE * SIZE + r * SIZE + c
                 face[d * SIZE + r] = cube_rotate(0, math.to_radians(angle), 0) * g_rubiks.cubes[i].model
             }
         }
 
-        for i in 0..< SIZE {
+        for d in 0..<SIZE {
+            for r in 0..<SIZE {
+
+                index := 0
+
+                if is_turn_down {
+                    index = r * SIZE * SIZE + (SIZE - d - 1) * SIZE + c
+                } else {
+                    // TODO: finish
+                    index = (SIZE - r - 1) * SIZE * SIZE
+                }
+
+                log.info(d, r, index)
+                g_rubiks.cubes[index].model = face[d * SIZE + r]
+            }
         }
-
-        
-
-        // 0, 0, 0, -> 0, 0, 2,
-        // 0, 1, 0, -> 0, 1, 1,
-        // 0, 2, 0 ->  0, 2, 0
-
-
     }
 
 }
 
 animate_cube_turn :: proc(angles: ^[3]f32) {
-    sides: [SIZE]int
-    for i in 0..< SIZE { sides[i] = i }
     for i in 0..< len(angles) { angles[i] += g_animation.change[i] * ROTATION_SPEED }
-
     models: [CUBES]InstanceData
 
-    for dim in sides {
+    for dim in 0..< SIZE {
         side := dim * SIZE * SIZE
 
         for cube in 0..< SIZE * SIZE {
@@ -143,7 +142,10 @@ animate_cube_turn :: proc(angles: ^[3]f32) {
         if math.abs(angles[i]) > math.abs(g_animation.angles[i]) {
             g_animate_turn = false
             angles[i] = 0
-            g_animation.turn_proc(sides[:], g_animation.angles[i] < 0.0)
-        }
+            g_animation.turn_proc(g_animation.angles[i] < 0.0)
+
+            mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
+            mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
+        } 
     }
 }
