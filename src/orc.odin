@@ -106,29 +106,51 @@ g_has_previous_point: bool = false
 key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action: i32, mods: i32) {
     context = g_ctx
 
+    // TODO: improve selection situation
     if key == glfw.KEY_ESCAPE && action == glfw.PRESS {
         g_has_selection = false
+        rubiks_cube_set_selection(0)
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
     if key == glfw.KEY_LEFT && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_has_selection = true
+        rubiks_cube_set_selection(0)
         g_selection.is_row_selected = false
         g_selection.col = (g_selection.col - 1) %% i16(SIZE)
+        rubiks_cube_set_selection(HIGHLIGHTING)
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
     if key == glfw.KEY_RIGHT && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_has_selection = true
+        rubiks_cube_set_selection(0)
         g_selection.is_row_selected = false
         g_selection.col = (g_selection.col + 1) %% i16(SIZE)
+        rubiks_cube_set_selection(HIGHLIGHTING)
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
     if key == glfw.KEY_UP && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_has_selection = true
+        rubiks_cube_set_selection(0)
         g_selection.is_row_selected = true
         g_selection.row = (g_selection.row - 1) %% i16(SIZE)
+        rubiks_cube_set_selection(HIGHLIGHTING)
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
     if key == glfw.KEY_DOWN && action & (glfw.REPEAT | glfw.PRESS) != 0 {
         g_has_selection = true
+        rubiks_cube_set_selection(0)
         g_selection.is_row_selected = true 
         g_selection.row = (g_selection.row + 1) %% i16(SIZE)
+        rubiks_cube_set_selection(HIGHLIGHTING)
+        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
+
+    log.info(g_selection)
 
     if g_animate_turn {
         return
@@ -286,26 +308,6 @@ main :: proc() {
 
     for !glfw.WindowShouldClose(win) {
         glfw.PollEvents()
-
-        /*
-        if g_has_selection {
-            for d in 0..< i16(SIZE) {
-                side := d * i16(SIZE * SIZE)
-
-                for r in 0..< i16(SIZE) {
-                    for c in 0..< i16(SIZE) {
-                        if g_selection.is_row_selected && r == g_selection.row {
-                            g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
-                        } else if !g_selection.is_row_selected && c == g_selection.col {
-                            g_rubiks.cubes[d + r * SIZE + c].highlight = HIGHLIGHTING
-                        }
-                    }
-                }
-            }
-        }
-        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
-        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES / SIZE * size_of(g_rubiks.cubes[0]))
-        */
 
         if g_animate_turn {
             animate_cube_turn(&angles)
