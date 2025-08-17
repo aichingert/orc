@@ -150,8 +150,6 @@ key_pressed :: proc "c" (win: glfw.WindowHandle, key: i32, scancode: i32, action
         mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
     }
 
-    log.info(g_selection)
-
     if g_animate_turn {
         return
     }
