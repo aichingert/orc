@@ -195,11 +195,11 @@ mouse_position :: proc "c" (win: glfw.WindowHandle, xpos: f64, ypos: f64) {
         y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos))
 
         for i in 0..< SIZE * SIZE * SIZE {
-            g_rubiks.cubes[i].model = cube_rotate(x_angle, y_angle, 0) * g_rubiks.cubes[i].model
+            g_camera.view = cube_rotate(x_angle, y_angle, 0) * g_camera.view
         }
 
-        mem.copy(g_cube_buf_maps[0], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
-        mem.copy(g_cube_buf_maps[1], raw_data(g_rubiks.cubes), CUBES * size_of(g_rubiks.cubes[0]))
+        mem.copy(g_camera_buf_maps[0], &g_camera, size_of(g_camera))
+        mem.copy(g_camera_buf_maps[1], &g_camera, size_of(g_camera))
     }
 
     g_previous_x_point = xpos
