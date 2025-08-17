@@ -13,7 +13,7 @@ import vk "vendor:vulkan"
 
 g_ctx: runtime.Context
 
-UNIT                :: 1.5
+UNIT                :: 1.2 
 SIZE                :: 3
 CUBES               :: SIZE * SIZE * SIZE
 WINDOW_OFFSET       :: 5
@@ -194,6 +194,7 @@ mouse_position :: proc "c" (win: glfw.WindowHandle, xpos: f64, ypos: f64) {
         x_angle := math.to_radians_f32(f32(xpos - g_previous_x_point))
         y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos))
 
+        // TODO: fix camera by multiplying this matrix at the end of all rotations being applied
         for i in 0..< SIZE * SIZE * SIZE {
             g_camera.view = cube_rotate(x_angle, y_angle, 0) * g_camera.view
         }

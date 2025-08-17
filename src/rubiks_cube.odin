@@ -8,10 +8,14 @@ rubiks_cube_init :: proc() {
     for dim in 0..< SIZE {
         // TODO: fix calculation to center any cube
 
+        start_x: f32 = (-UNIT / SIZE) * (SIZE - 1)
+        start_y: f32 = (-UNIT / SIZE) * (SIZE - 1)
+        start_z: f32 = (-UNIT / SIZE) * (SIZE - 1)
+
         mat := matrix[4,4]f32{
-            1, 0, 0, -UNIT,
-            0, 1, 0, -UNIT,
-            0, 0, 1, -UNIT + UNIT * f32(dim),
+            1, 0, 0, start_x,
+            0, 1, 0, start_y,
+            0, 0, 1, start_z + UNIT * f32(dim),
             0, 0, 0, 1,
         }
 
@@ -22,7 +26,7 @@ rubiks_cube_init :: proc() {
             }
 
             mat[1, 3] += UNIT
-            mat[0, 3] = -UNIT
+            mat[0, 3] = start_x
         }
     }
 
