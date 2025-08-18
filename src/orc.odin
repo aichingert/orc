@@ -60,6 +60,7 @@ UNIFORM_BUFFER_DYNAMIC_BINDING  :: 1
 Camera :: struct {
     view: matrix[4,4]f32,
     proj: matrix[4,4]f32,
+    pann: matrix[4,4]f32,
 }
 
 InstanceData :: struct {
@@ -191,12 +192,12 @@ mouse_position :: proc "c" (win: glfw.WindowHandle, xpos: f64, ypos: f64) {
     state := glfw.GetMouseButton(win, glfw.MOUSE_BUTTON_LEFT);
 
     if g_has_previous_point && state == 1 {
-        x_angle := math.to_radians_f32(f32(xpos - g_previous_x_point))
-        y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos))
+        x_angle := math.to_radians_f32(f32(xpos - g_previous_x_point) / WINDOW_OFFSET)
+        y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos) / WINDOW_OFFSET)
 
         // TODO: fix camera by multiplying this matrix at the end of all rotations being applied
         for i in 0..< SIZE * SIZE * SIZE {
-            g_camera.view = cube_rotate(x_angle, y_angle, 0) * g_camera.view
+            g_camera.pann = cube_rotate(x_angle, y_angle, 0) * g_camera.pann
         }
 
         mem.copy(g_camera_buf_maps[0], &g_camera, size_of(g_camera))
@@ -286,6 +287,12 @@ main :: proc() {
     near         := f32(.1)
     far          := f32(10)
 
+    g_camera.pann = {
+        1, 0, 0, 0, 
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    }
     g_camera.view = {
         1, 0, 0, 0, 
         0, 1, 0, 0,
