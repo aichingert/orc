@@ -192,8 +192,8 @@ mouse_position :: proc "c" (win: glfw.WindowHandle, xpos: f64, ypos: f64) {
     state := glfw.GetMouseButton(win, glfw.MOUSE_BUTTON_LEFT);
 
     if g_has_previous_point && state == 1 {
-        x_angle := math.to_radians_f32(f32(xpos - g_previous_x_point) / WINDOW_OFFSET)
-        y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos) / WINDOW_OFFSET)
+        x_angle := math.to_radians_f32(f32(xpos - g_previous_x_point) / (WINDOW_OFFSET * WINDOW_OFFSET))
+        y_angle := math.to_radians_f32(f32(g_previous_y_point - ypos) / (WINDOW_OFFSET * WINDOW_OFFSET))
 
         // TODO: fix camera by multiplying this matrix at the end of all rotations being applied
         for i in 0..< SIZE * SIZE * SIZE {
