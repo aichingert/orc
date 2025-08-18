@@ -19,7 +19,7 @@ CUBES               :: SIZE * SIZE * SIZE
 WINDOW_OFFSET       :: 5
 
 HIGHLIGHTING        :: 0.3
-ROTATION_SPEED      :: 0.13
+ROTATION_SPEED      :: 0.2
 
 MAX_FRAMES_BETWEEN  :: 2
 

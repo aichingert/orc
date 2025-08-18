@@ -6,11 +6,9 @@ import "core:math"
 
 rubiks_cube_init :: proc() {
     for dim in 0..< SIZE {
-        // TODO: fix calculation to center any cube
-
-        start_x: f32 = (-UNIT / SIZE) * (SIZE - 1)
-        start_y: f32 = (-UNIT / SIZE) * (SIZE - 1)
-        start_z: f32 = (-UNIT / SIZE) * (SIZE - 1)
+        start_x: f32 = (-UNIT * 0.5) * (SIZE - 1)
+        start_y: f32 = (-UNIT * 0.5) * (SIZE - 1)
+        start_z: f32 = (-UNIT * 0.5) * (SIZE - 1)
 
         mat := matrix[4,4]f32{
             1, 0, 0, start_x,
@@ -152,6 +150,7 @@ rubiks_cube_turn_z :: proc(row: int, is_turn_left: bool) {
 
 }
 
+// TODO: simplify and maybe embed the other turn functions as well
 rubiks_cube_turn_selection :: proc(angles: ^[3]f32) {
     if g_selection.is_row_selected {
         if angles[2] == 0.0 {
@@ -165,7 +164,6 @@ rubiks_cube_turn_selection :: proc(angles: ^[3]f32) {
 
         for dim in 0..< SIZE {
             for col in 0..< SIZE {
-                // TODO
                 i := dim * SIZE * SIZE + int(g_selection.row) * SIZE + col
                 models[i].model = cube_rotate(math.to_radians_f32(angles[2]), 0, 0) * models[i].model
             }
