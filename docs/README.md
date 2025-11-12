@@ -4,7 +4,7 @@ A rubiks cube simulation using odin and vulkan with glfw as windowing library.
 
 ## demo
 
-https://github.com/user-attachments/assets/f6dc5295-636c-4c37-b092-ec12e166dea6
+[orc-example.webm](https://github.com/user-attachments/assets/d56e204b-c57e-4d29-b41d-396a8c95947a)
 
 ## controls
 
